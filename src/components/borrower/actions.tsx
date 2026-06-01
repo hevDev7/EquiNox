@@ -2,8 +2,9 @@
    Equinox — Borrower actions: Deposit & Encrypt · Borrow · Repay & Unwrap
    ============================================================ */
 
-import { useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { fmtNum, fmtUSD } from '../../lib/format';
+import { FAUCET_MAX_MINT, USDC_FAUCET_KEY, cooldownRemaining, fmtCooldown, markMinted } from '../../lib/faucet-cooldown';
 import { Icon, ICON } from '../../lib/icons';
 import { PROTOCOL } from '../../lib/protocol';
 import { canRepay } from '../../lib/sealed-read';
@@ -201,18 +202,36 @@ export function TxHistory({ history, now, title = 'Transaction history' }: { his
 
 /* ---------------- FAUCET (testnet) ---------------- */
 export function FaucetScreen({ pos, asset, activeAssetId, onSelectAsset, onMint, onMintUsdc }: { pos: Position; asset: Asset; activeAssetId: number; onSelectAsset: (id: number) => void; onMint: (n: number) => Promise<void>; onMintUsdc: (n: number) => Promise<void> }) {
-  const [amt, setAmt] = useState('1000');
+  const [amt, setAmt] = useState(String(FAUCET_MAX_MINT));
   const [open, setOpen] = useState(false);
-  const [usdcAmt, setUsdcAmt] = useState('10000');
+  const [usdcAmt, setUsdcAmt] = useState(String(FAUCET_MAX_MINT));
   const [usdcBusy, setUsdcBusy] = useState(false);
+  // tick every second so the 24h cooldown countdown updates + re-enables on expiry
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, []);
   const n = parseFloat(amt) || 0;
   const usdcN = parseFloat(usdcAmt) || 0;
   const wallet = pos.walletShares[asset.sym] ?? 0;
-  const valid = n > 0;
+  // per-faucet 24h cooldown, keyed by dShare symbol (or the USDC sentinel)
+  const dCooldown = cooldownRemaining(asset.sym, now);
+  const usdcCooldown = cooldownRemaining(USDC_FAUCET_KEY, now);
+  const overCap = n > FAUCET_MAX_MINT;
+  const usdcOverCap = usdcN > FAUCET_MAX_MINT;
+  const valid = n > 0 && !overCap && dCooldown <= 0;
+  const usdcValid = usdcN > 0 && !usdcOverCap && usdcCooldown <= 0;
   const mintUsdc = async () => {
-    if (usdcN <= 0 || usdcBusy) return;
+    if (!usdcValid || usdcBusy) return;
     setUsdcBusy(true);
-    try { await onMintUsdc(usdcN); } finally { setUsdcBusy(false); }
+    try {
+      await onMintUsdc(Math.min(usdcN, FAUCET_MAX_MINT));
+      markMinted(USDC_FAUCET_KEY); // start the 24h cooldown only after a successful mint
+      setNow(Date.now());
+    } finally {
+      setUsdcBusy(false);
+    }
   };
   const steps: Step[] = [{ label: `Mint ${asset.sym} to your wallet`, detail: 'open testnet faucet · mint(you, amount)' }];
   return (
@@ -232,12 +251,22 @@ export function FaucetScreen({ pos, asset, activeAssetId, onSelectAsset, onMint,
               value={amt}
               onChange={setAmt}
               suffix={asset.sym}
-              onMax={() => setAmt('10000')}
-              max={`Free testnet faucet · ${asset.name}`}
+              onMax={() => setAmt(String(FAUCET_MAX_MINT))}
+              max={`Max ${fmtNum(FAUCET_MAX_MINT)} ${asset.sym} per mint · once every 24h`}
             />
           </div>
+          {overCap && (
+            <div style={{ fontSize: 13, color: 'var(--danger)', marginTop: 10 }}>
+              Faucet limit is {fmtNum(FAUCET_MAX_MINT)} {asset.sym} per mint.
+            </div>
+          )}
+          {dCooldown > 0 && (
+            <div style={{ fontSize: 13, color: 'var(--ink-3)', marginTop: 10 }}>
+              Faucet used — mint more {asset.sym} in <strong style={{ color: 'var(--ink-2)' }}>{fmtCooldown(dCooldown)}</strong>.
+            </div>
+          )}
           <button className="btn btn-primary btn-lg" style={{ width: '100%', marginTop: 16 }} disabled={!valid} onClick={() => setOpen(true)}>
-            <Icon d={ICON.plus} size={16} /> {`Mint ${n ? fmtNum(n) : ''} ${asset.sym}`}
+            <Icon d={ICON.plus} size={16} /> {dCooldown > 0 ? `Available in ${fmtCooldown(dCooldown)}` : `Mint ${n ? fmtNum(n) : ''} ${asset.sym}`}
           </button>
         </InfoCard>
 
@@ -252,12 +281,22 @@ export function FaucetScreen({ pos, asset, activeAssetId, onSelectAsset, onMint,
               value={usdcAmt}
               onChange={setUsdcAmt}
               suffix="USDC"
-              onMax={() => setUsdcAmt('100000')}
-              max="Free testnet faucet · mintable MockUSDC"
+              onMax={() => setUsdcAmt(String(FAUCET_MAX_MINT))}
+              max={`Max ${fmtNum(FAUCET_MAX_MINT)} USDC per mint · once every 24h`}
             />
           </div>
-          <button className="btn btn-sm" style={{ width: '100%', marginTop: 12 }} disabled={usdcN <= 0 || usdcBusy} onClick={mintUsdc}>
-            <Icon d={ICON.plus} size={14} /> {usdcBusy ? 'Minting…' : `Mint ${usdcN ? fmtNum(usdcN) : ''} USDC`}
+          {usdcOverCap && (
+            <div style={{ fontSize: 13, color: 'var(--danger)', marginTop: 10 }}>
+              Faucet limit is {fmtNum(FAUCET_MAX_MINT)} USDC per mint.
+            </div>
+          )}
+          {usdcCooldown > 0 && (
+            <div style={{ fontSize: 13, color: 'var(--ink-3)', marginTop: 10 }}>
+              Faucet used — mint more USDC in <strong style={{ color: 'var(--ink-2)' }}>{fmtCooldown(usdcCooldown)}</strong>.
+            </div>
+          )}
+          <button className="btn btn-sm" style={{ width: '100%', marginTop: 12 }} disabled={!usdcValid || usdcBusy} onClick={mintUsdc}>
+            <Icon d={ICON.plus} size={14} /> {usdcBusy ? 'Minting…' : usdcCooldown > 0 ? `Available in ${fmtCooldown(usdcCooldown)}` : `Mint ${usdcN ? fmtNum(usdcN) : ''} USDC`}
           </button>
         </InfoCard>
       </div>
@@ -268,9 +307,9 @@ export function FaucetScreen({ pos, asset, activeAssetId, onSelectAsset, onMint,
         steps={steps}
         cta={`Mint ${asset.sym}`}
         onClose={() => setOpen(false)}
-        action={() => onMint(n)}
-        onDone={() => setOpen(false)}
-        summary={<KV k="You receive" v={`${fmtNum(n)} ${asset.sym}`} />}
+        action={() => onMint(Math.min(n, FAUCET_MAX_MINT))}
+        onDone={() => { markMinted(asset.sym); setNow(Date.now()); setOpen(false); }}
+        summary={<KV k="You receive" v={`${fmtNum(Math.min(n, FAUCET_MAX_MINT))} ${asset.sym}`} />}
       />
     </div>
   );
