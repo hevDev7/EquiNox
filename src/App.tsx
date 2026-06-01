@@ -257,6 +257,16 @@ export default function App() {
     setClaims(cached);
     if (USE_REAL_CHAIN) cached.forEach((c) => void equinox.prepareUnwrap(c.id));
   }, [address, equinox]);
+
+  // keep re-warming any pending claim whose decrypt hasn't finished (e.g. a transient
+  // threshold-network failure exhausted its retries) so the Claim button eventually goes live.
+  useEffect(() => {
+    if (!USE_REAL_CHAIN || claims.length === 0) return;
+    const id = setInterval(() => {
+      for (const c of claims) if (!equinox.isUnwrapClaimReady(c.id)) void equinox.prepareUnwrap(c.id);
+    }, 10_000);
+    return () => clearInterval(id);
+  }, [claims, equinox]);
   const recordTx = useCallback(
     (e: Omit<TxHistoryEntry, 'ts'>) => {
       if (!address) return;
@@ -431,6 +441,7 @@ export default function App() {
           : [...p.collateral, { sym: `fb${a.sym.slice(1)}`, under: a.sym, shares: n }];
       return { ...p, collateral, walletShares: { ...p.walletShares, [a.sym]: Math.max(0, (p.walletShares[a.sym] ?? 0) - n) } };
     });
+    recordTx({ kind: 'deposit', sym: a.sym, amount: n, txHash: hash });
     pushToast({ title: `Deposited ${fmtNum(n)} ${a.sym} as encrypted collateral`, icon: 'lock', hash });
     setTab('portfolio');
     syncState();
@@ -453,12 +464,14 @@ export default function App() {
 
   const onProvideLiquidity = async (n: number) => {
     const { txHash: hash } = await equinox.provideLiquidity(n);
+    recordTx({ kind: 'provide', amount: n, txHash: hash });
     pushToast({ title: `Supplied ${fmtUSD(n)} USDC liquidity`, icon: 'wallet', hash });
     syncState();
   };
 
   const onWithdrawLiquidity = async (n: number) => {
     const { txHash: hash } = await equinox.withdrawLiquidity(n);
+    recordTx({ kind: 'withdraw', amount: n, txHash: hash });
     pushToast({ title: `Withdrew ${fmtUSD(n)} USDC liquidity`, icon: 'check', hash });
     syncState();
   };
@@ -470,6 +483,7 @@ export default function App() {
       return;
     }
     setPos((p) => ({ ...p, debtUSDC: p.debtUSDC + res.disbursed, walletUSDC: p.walletUSDC + res.disbursed }));
+    recordTx({ kind: 'borrow', amount: res.disbursed, txHash: res.txHash });
     pushToast({ title: `Borrowed ${fmtUSD(res.disbursed)} USDC confidentially`, icon: 'check', hash: res.txHash });
     setTab('portfolio');
     syncState();
@@ -554,10 +568,12 @@ export default function App() {
                   onToggleWeekend={() => setTweak('weekendSim', false)}
                   go={setTab}
                   asset={asset}
+                  history={txHistory}
+                  now={now}
                   onDeposit={() => setDepositOpen(true)}
                 />
               ) : tab === 'borrow' ? (
-                <BorrowScreen pos={pos} der={der} asset={asset} weekend={weekend} onBack={() => setTab('portfolio')} onBorrow={onBorrow} />
+                <BorrowScreen pos={pos} der={der} asset={asset} weekend={weekend} history={txHistory} now={now} onBack={() => setTab('portfolio')} onBorrow={onBorrow} />
               ) : tab === 'repay' ? (
                 <RepayScreen
                   pos={pos}
@@ -568,6 +584,7 @@ export default function App() {
                   claims={claims}
                   history={txHistory}
                   now={now}
+                  decryptReady={(id) => equinox.isUnwrapClaimReady(id)}
                   onBack={() => setTab('portfolio')}
                   onRepay={onRepay}
                   onRequestUnwrap={onRequestUnwrap}
@@ -575,7 +592,7 @@ export default function App() {
                   onRefreshPermit={onRefreshPermit}
                 />
               ) : tab === 'liquidity' ? (
-                <LiquidityScreen liq={liq} onProvide={onProvideLiquidity} onWithdraw={onWithdrawLiquidity} />
+                <LiquidityScreen liq={liq} history={txHistory} now={now} onProvide={onProvideLiquidity} onWithdraw={onWithdrawLiquidity} />
               ) : (
                 <FaucetScreen pos={pos} asset={asset} activeAssetId={activeAssetId} onSelectAsset={setActiveAssetId} onMint={onMint} onMintUsdc={onMintUsdc} />
               )

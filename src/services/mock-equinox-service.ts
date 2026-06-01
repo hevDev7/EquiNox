@@ -71,6 +71,10 @@ export class MockEquinoxService implements EquinoxService {
     /* mock has no threshold network to warm */
   }
 
+  isUnwrapClaimReady(_claimId: string): boolean {
+    return true; // mock has no real decrypt — the readyAt timer gates the demo UX
+  }
+
   async claimUnwrapped(_claimId: string, shares: number): Promise<ClaimResult> {
     await delay(300);
     return { shares, txHash: txHash() };

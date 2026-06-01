@@ -6,13 +6,13 @@
    metadata the user already knows — sealed balances never touched.
    ============================================================ */
 
-export type TxKind = 'repay' | 'unwrap' | 'claim';
+export type TxKind = 'borrow' | 'repay' | 'deposit' | 'unwrap' | 'claim' | 'provide' | 'withdraw';
 
 export interface TxHistoryEntry {
   kind: TxKind;
-  /** dShare symbol for unwrap/claim (e.g. 'dTSLA'); omitted for USDC repay. */
+  /** dShare symbol for deposit/unwrap/claim (e.g. 'dTSLA'); omitted for USDC-denominated txs. */
   sym?: string;
-  /** USDC (repay) or whole shares (unwrap/claim). */
+  /** USDC (borrow/repay/provide/withdraw) or whole shares (deposit/unwrap/claim). */
   amount: number;
   /** on-chain tx hash (explorer link). */
   txHash: string;

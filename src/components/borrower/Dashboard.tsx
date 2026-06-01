@@ -8,6 +8,8 @@ import type { Asset, AssetMap, BorrowerTab, DerivedPosition, Position } from '..
 import { SealedValue, Stat } from '../primitives';
 import { BlindedHF } from '../health';
 import { PositionTabs, WeekendBanner } from './common';
+import { TxHistory } from './actions';
+import type { TxHistoryEntry } from '../../lib/tx-history';
 
 export function Dashboard({
   pos,
@@ -18,6 +20,8 @@ export function Dashboard({
   onToggleWeekend,
   go,
   asset,
+  history,
+  now,
   onDeposit,
 }: {
   pos: Position;
@@ -28,6 +32,8 @@ export function Dashboard({
   onToggleWeekend: () => void;
   go: (tab: BorrowerTab) => void;
   asset: Asset;
+  history: TxHistoryEntry[];
+  now: number;
   onDeposit: () => void;
 }) {
   // multi-collateral: distinct underlyings the borrower actually holds
@@ -77,6 +83,9 @@ export function Dashboard({
 
       {/* collateral + blinding primitive — merged tabs */}
       <PositionTabs pos={pos} der={der} prices={prices} asset={asset} go={go} />
+
+      {/* deposit / wrap activity (dShare → sealed fbShare) — the collateral-IN side */}
+      <TxHistory history={history.filter((h) => h.kind === 'deposit')} now={now} title="Deposit & wrap history" />
     </div>
   );
 }

@@ -83,6 +83,9 @@ export interface EquinoxService {
   requestUnwrap(shares: number, assetId: number): Promise<UnwrapRequest>;
   /** Warm the threshold-decrypt for a pending claim in the background so the Claim tx is instant. */
   prepareUnwrap(claimId: string): Promise<void>;
+  /** True once a pending claim's decrypt has finished (proof cached) — the UI gates the Claim
+   *  button on this so clicking pops the MetaMask confirm instantly, not after a 1-2 min decrypt. */
+  isUnwrapClaimReady(claimId: string): boolean;
   claimUnwrapped(claimId: string, shares: number): Promise<ClaimResult>;
   /** Liquidator view — only the public blinded factors A,B per account. */
   listAccounts(): Promise<Account[]>;

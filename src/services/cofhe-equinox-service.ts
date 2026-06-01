@@ -154,23 +154,35 @@ export class CofheEquinoxService implements EquinoxService {
    *  fire claimWithdraw — and thus the MetaMask popup — INSTANTLY, instead of stalling 1-2 min
    *  on the threshold network at click time. */
   private _unwrapProofs = new Map<string, ReturnType<typeof decryptForTxUint64>>();
+  private _unwrapReady = new Set<string>(); // claimIds whose pre-warm decrypt has RESOLVED
 
   /** Decrypt a withdrawal's sealed `take` once, sharing the promise so a concurrent
-   *  prepare + claim never double-decrypts. A failed decrypt is evicted so it can retry. */
+   *  prepare + claim never double-decrypts. Marks the claim "ready" once it resolves so the
+   *  UI only enables Claim when the proof is cached (→ MetaMask pops instantly). A failed
+   *  decrypt is evicted so it can retry. */
   private _decryptUnwrap(claimId: string, handle: bigint): ReturnType<typeof decryptForTxUint64> {
     let p = this._unwrapProofs.get(claimId);
     if (!p) {
       p = decryptForTxUint64(handle);
-      p.catch(() => this._unwrapProofs.delete(claimId));
+      p.then(() => this._unwrapReady.add(claimId)).catch(() => {
+        this._unwrapProofs.delete(claimId);
+        this._unwrapReady.delete(claimId);
+      });
       this._unwrapProofs.set(claimId, p);
     }
     return p;
+  }
+
+  /** True once a claim's threshold-decrypt has finished (proof cached) → claiming is instant. */
+  isUnwrapClaimReady(claimId: string): boolean {
+    return this._unwrapReady.has(claimId);
   }
 
   /** Warm the threshold-decrypt for a pending unwrap claim in the BACKGROUND (called right
    *  after requestUnwrap), so claimUnwrapped finds it ready. Best-effort & idempotent. */
   async prepareUnwrap(claimId: string): Promise<void> {
     try {
+      await ensureCofhe(this.pub, await getWalletClient()); // bind the SDK so the warm works on a fresh reload too
       const w = await this.read<readonly [Address, bigint, boolean, boolean, bigint]>(
         ADDRESSES.pool,
         poolAbi,
@@ -407,6 +419,7 @@ export class CofheEquinoxService implements EquinoxService {
     const { value, proof } = await this._decryptUnwrap(claimId, BigInt(w[1]));
     const receipt = await this.send(ADDRESSES.pool, poolAbi, 'claimWithdraw', [BigInt(claimId), value, proof]);
     this._unwrapProofs.delete(claimId);
+    this._unwrapReady.delete(claimId);
     return { shares: Number(value), txHash: receipt.transactionHash }; // whole dShares freed (0 if HF-gated)
   }
 

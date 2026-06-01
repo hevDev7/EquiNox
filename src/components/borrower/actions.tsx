@@ -8,7 +8,7 @@ import { Icon, ICON } from '../../lib/icons';
 import { PROTOCOL } from '../../lib/protocol';
 import { canRepay } from '../../lib/sealed-read';
 import type { Asset, Claim, DerivedPosition, Position } from '../../types';
-import type { TxHistoryEntry } from '../../lib/tx-history';
+import type { TxHistoryEntry, TxKind } from '../../lib/tx-history';
 import type { LiquidityInfo } from '../../services/types';
 import { AssetMark, DecimalIndicator, EncTag, SealedValue, type Step } from '../primitives';
 import { hfColor } from '../health';
@@ -125,6 +125,80 @@ export function KV({ k, v, accent, mono }: { k: ReactNode; v: ReactNode; accent?
   );
 }
 
+/* ---------------- shared transaction-history card (paginated, 10/page) ---------------- */
+const TX_META: Record<TxKind, { label: string; usd: boolean; color: string }> = {
+  borrow: { label: 'Borrow', usd: true, color: 'var(--accent)' },
+  repay: { label: 'Repay', usd: true, color: 'var(--accent-ink)' },
+  deposit: { label: 'Deposit', usd: false, color: 'var(--ink-2)' },
+  unwrap: { label: 'Unwrap', usd: false, color: 'var(--ink-2)' },
+  claim: { label: 'Claim', usd: false, color: 'var(--positive)' },
+  provide: { label: 'Supply', usd: true, color: 'var(--positive)' },
+  withdraw: { label: 'Withdraw', usd: true, color: 'var(--ink-2)' },
+};
+
+/** Paginated tx-history card (max 10 rows/page). `history` is pre-filtered by the caller to the
+ *  kinds relevant to its page (newest-first); each row links to the Arbiscan tx. */
+export function TxHistory({ history, now, title = 'Transaction history' }: { history: TxHistoryEntry[]; now: number; title?: string }) {
+  const PAGE = 10;
+  const [page, setPage] = useState(0);
+  const pageCount = Math.max(1, Math.ceil(history.length / PAGE));
+  const safePage = Math.min(page, pageCount - 1);
+  const start = safePage * PAGE;
+  const visible = history.slice(start, start + PAGE);
+  return (
+    <InfoCard title={`${title} · ${history.length}`}>
+      {history.length === 0 && <div style={{ fontSize: 13, color: 'var(--ink-3)', padding: '8px 0' }}>No transactions yet.</div>}
+      {visible.map((h, i) => {
+        const m = TX_META[h.kind];
+        const wrapped = h.sym ? `fb${h.sym.slice(1)}` : '';
+        // show the wrap direction for collateral moves: deposit = dShare→sealed (dTSLA → fbTSLA),
+        // unwrap = sealed→dShare (fbTSLA → dTSLA); claim realizes the unwrapped dShares.
+        const amt =
+          h.kind === 'deposit'
+            ? `${fmtNum(h.amount)} ${h.sym} → ${wrapped}`
+            : h.kind === 'unwrap'
+              ? `${fmtNum(h.amount)} ${wrapped} → ${h.sym}`
+              : m.usd
+                ? fmtUSD(h.amount)
+                : `${fmtNum(h.amount)} ${h.sym ?? ''}`;
+        return (
+          <div
+            key={`${h.txHash}-${start + i}`}
+            style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, padding: '11px 0', borderBottom: '1px solid var(--line)' }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
+              <span className="pill" style={{ background: 'var(--surface-2)', color: m.color, flex: 'none' }}>{m.label}</span>
+              <div style={{ minWidth: 0 }}>
+                <div className="tabnum" style={{ fontWeight: 600, fontSize: 14 }}>{amt}</div>
+                <div className="mono" style={{ fontSize: 12, color: 'var(--ink-3)' }}>{relTime(h.ts, now)}</div>
+              </div>
+            </div>
+            <a className="btn btn-sm btn-ghost" href={`${EXPLORER}/tx/${h.txHash}`} target="_blank" rel="noreferrer" style={{ flex: 'none', gap: 5 }}>
+              View <Icon d={ICON.arrowR} size={13} />
+            </a>
+          </div>
+        );
+      })}
+      {pageCount > 1 && (
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, paddingTop: 12 }}>
+          <span style={{ fontSize: 12, color: 'var(--ink-3)' }}>
+            {start + 1}–{Math.min(start + PAGE, history.length)} of {history.length}
+          </span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <button className="btn btn-sm btn-ghost" disabled={safePage === 0} onClick={() => setPage((p) => Math.max(0, p - 1))} aria-label="Previous page">
+              <Icon d={ICON.arrowR} size={13} style={{ transform: 'rotate(180deg)' }} />
+            </button>
+            <span className="mono" style={{ fontSize: 12, color: 'var(--ink-2)', minWidth: 46, textAlign: 'center' }}>{safePage + 1} / {pageCount}</span>
+            <button className="btn btn-sm btn-ghost" disabled={safePage >= pageCount - 1} onClick={() => setPage((p) => Math.min(pageCount - 1, p + 1))} aria-label="Next page">
+              <Icon d={ICON.arrowR} size={13} />
+            </button>
+          </div>
+        </div>
+      )}
+    </InfoCard>
+  );
+}
+
 /* ---------------- FAUCET (testnet) ---------------- */
 export function FaucetScreen({ pos, asset, activeAssetId, onSelectAsset, onMint, onMintUsdc }: { pos: Position; asset: Asset; activeAssetId: number; onSelectAsset: (id: number) => void; onMint: (n: number) => Promise<void>; onMintUsdc: (n: number) => Promise<void> }) {
   const [amt, setAmt] = useState('1000');
@@ -203,7 +277,7 @@ export function FaucetScreen({ pos, asset, activeAssetId, onSelectAsset, onMint,
 }
 
 /* ---------------- LIQUIDITY (LP supply side) ---------------- */
-export function LiquidityScreen({ liq, onProvide, onWithdraw }: { liq: LiquidityInfo; onProvide: (n: number) => Promise<void>; onWithdraw: (n: number) => Promise<void> }) {
+export function LiquidityScreen({ liq, history, now, onProvide, onWithdraw }: { liq: LiquidityInfo; history: TxHistoryEntry[]; now: number; onProvide: (n: number) => Promise<void>; onWithdraw: (n: number) => Promise<void> }) {
   const [mode, setMode] = useState<'supply' | 'withdraw'>('supply');
   const [amt, setAmt] = useState('');
   const [open, setOpen] = useState(false);
@@ -276,6 +350,10 @@ export function LiquidityScreen({ liq, onProvide, onWithdraw }: { liq: Liquidity
             Rates follow a kinked curve — interest rises sharply past <strong style={{ color: 'var(--ink-2)' }}>80% utilization</strong> (the kink), keeping liquidity available for withdrawals.
           </div>
         </InfoCard>
+      </div>
+
+      <div style={{ marginTop: 20 }}>
+        <TxHistory history={history.filter((h) => h.kind === 'provide' || h.kind === 'withdraw')} now={now} title="Liquidity history" />
       </div>
 
       <TxFlow
@@ -488,6 +566,8 @@ export function BorrowScreen({
   der,
   asset,
   weekend,
+  history,
+  now,
   onBack,
   onBorrow,
 }: {
@@ -495,6 +575,8 @@ export function BorrowScreen({
   der: DerivedPosition;
   asset: Asset;
   weekend: boolean;
+  history: TxHistoryEntry[];
+  now: number;
   onBack: () => void;
   onBorrow: (n: number) => Promise<void>;
 }) {
@@ -582,6 +664,10 @@ export function BorrowScreen({
         </InfoCard>
       </div>
 
+      <div style={{ marginTop: 20 }}>
+        <TxHistory history={history.filter((h) => h.kind === 'borrow')} now={now} title="Borrow history" />
+      </div>
+
       <TxFlow
         open={open}
         title="Confidential borrow"
@@ -612,6 +698,7 @@ export function RepayScreen({
   claims,
   history,
   now,
+  decryptReady,
   onBack,
   onRepay,
   onRequestUnwrap,
@@ -626,6 +713,8 @@ export function RepayScreen({
   claims: Claim[];
   history: TxHistoryEntry[];
   now: number;
+  /** true once a claim's decrypt is cached → gate the Claim button so the tx pops instantly. */
+  decryptReady: (id: string) => boolean;
   onBack: () => void;
   onRepay: (n: number) => Promise<void>;
   onRequestUnwrap: (n: number, assetId: number) => Promise<void>;
@@ -773,7 +862,11 @@ export function RepayScreen({
           <InfoCard title={`Pending unwrap claims · ${claims.length}`}>
             {claims.length === 0 && <div style={{ fontSize: 13, color: 'var(--ink-3)', padding: '8px 0' }}>No pending claims.</div>}
             {claims.map((c) => {
-              const ready = now >= c.readyAt;
+              // ready ONLY when the threshold-decrypt has actually finished (proof cached) so
+              // clicking Claim pops MetaMask instantly — not after a 1-2 min on-click decrypt.
+              // Safety fallback: reveal the button anyway well past readyAt so a stuck warm never
+              // blocks the user (claimUnwrapped then decrypts on demand).
+              const ready = (decryptReady(c.id) && now >= c.readyAt) || now >= c.readyAt + 180_000;
               const pct = Math.min(100, ((now - c.requestedAt) / (c.readyAt - c.requestedAt)) * 100);
               return (
                 <div key={c.id} style={{ padding: '12px 0', borderBottom: '1px solid var(--line)' }}>
@@ -821,39 +914,7 @@ export function RepayScreen({
             })}
           </InfoCard>
 
-          <InfoCard title={`Transaction history · ${history.length}`}>
-            {history.length === 0 && (
-              <div style={{ fontSize: 13, color: 'var(--ink-3)', padding: '8px 0' }}>No repay / unwrap transactions yet.</div>
-            )}
-            {history.slice(0, 8).map((h, i) => {
-              const label = h.kind === 'repay' ? 'Repay' : h.kind === 'unwrap' ? 'Unwrap' : 'Claim';
-              const amt = h.kind === 'repay' ? `${fmtUSD(h.amount)}` : `${fmtNum(h.amount)} ${h.sym ?? ''}`;
-              const col = h.kind === 'repay' ? 'var(--accent-ink)' : h.kind === 'claim' ? 'var(--positive)' : 'var(--ink-2)';
-              return (
-                <div
-                  key={`${h.txHash}-${i}`}
-                  style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, padding: '11px 0', borderBottom: '1px solid var(--line)' }}
-                >
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
-                    <span className="pill" style={{ background: 'var(--surface-2)', color: col, flex: 'none' }}>{label}</span>
-                    <div style={{ minWidth: 0 }}>
-                      <div className="tabnum" style={{ fontWeight: 600, fontSize: 14 }}>{amt}</div>
-                      <div className="mono" style={{ fontSize: 12, color: 'var(--ink-3)' }}>{relTime(h.ts, now)}</div>
-                    </div>
-                  </div>
-                  <a
-                    className="btn btn-sm btn-ghost"
-                    href={`${EXPLORER}/tx/${h.txHash}`}
-                    target="_blank"
-                    rel="noreferrer"
-                    style={{ flex: 'none', gap: 5 }}
-                  >
-                    View <Icon d={ICON.arrowR} size={13} />
-                  </a>
-                </div>
-              );
-            })}
-          </InfoCard>
+          <TxHistory history={history.filter((h) => h.kind === 'repay' || h.kind === 'unwrap' || h.kind === 'claim')} now={now} title="Repay & unwrap history" />
         </div>
       </div>
 
