@@ -478,6 +478,17 @@ export default function App() {
 
   const onBorrow = async (n: number) => {
     const res = await equinox.borrow(n, der.remaining);
+    if (res.pending) {
+      // borrow committed on-chain; USDC disbursement is finishing in the background (threshold
+      // network slow/degraded). Record the request, nudge recovery, and let syncState reflect the
+      // USDC once it lands — the modal completes instead of hanging on the decrypt.
+      recordTx({ kind: 'borrow', amount: n, txHash: res.txHash });
+      pushToast({ title: `Borrow confirmed — ${fmtUSD(n)} USDC disbursing (network slow, arrives shortly)`, icon: 'clock', hash: res.txHash });
+      setTab('portfolio');
+      syncState();
+      void recoverPayouts();
+      return;
+    }
     if (!res.approved || res.disbursed <= 0) {
       pushToast({ title: 'FHE.select drew $0 — limit exceeded, no leak', icon: 'shield' });
       return;

@@ -56,6 +56,9 @@ export interface BorrowResult extends TxResult {
   /** false when the request exceeded the sealed limit (FHE.select → 0, no revert). */
   approved: boolean;
   disbursed: number;
+  /** true when the borrow is committed on-chain but the USDC disbursement (threshold-decrypt →
+   *  claimWithdraw) didn't finish in time and is completing in the background (recoverBorrowPayouts). */
+  pending?: boolean;
 }
 
 export interface UnwrapRequest {

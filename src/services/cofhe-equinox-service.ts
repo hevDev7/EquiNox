@@ -367,9 +367,32 @@ export class CofheEquinoxService implements EquinoxService {
     addPendingPayout(me, { withdrawId: withdrawId.toString(), amount, ts: Date.now() });
 
     _t = _now();
-    const disbursed = await this._claimPayout(me, withdrawId);
-    tlog('borrow › _claimPayout TOTAL (the "Disburse USDC · update limit" step)', _t);
+    // BOUND the disburse. _claimPayout's decryptForTx runs on the CoFHE threshold network, which
+    // can be slow or — when the testnet coprocessor is degraded — UNRESPONSIVE (no timeout on
+    // .execute()), which would hang the modal forever at "Disburse USDC". Race the claim against a
+    // timeout: on timeout the borrow is already on-chain (requestBorrow + requestWithdraw committed)
+    // and the pending payout persists, so recoverBorrowPayouts (and the still-running claim) realize
+    // the USDC in the background — the modal completes as "disbursing", never stalls.
+    const TIMED_OUT = -2;
+    const claimP = this._claimPayout(me, withdrawId).catch((e) => {
+      console.warn('[equinox] borrow disbursement deferred — recovery will finish it:', String((e as Error)?.message ?? e));
+      return -1; // claim errored/deferred → pending
+    });
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const disbursed = await Promise.race<number>([
+      claimP,
+      new Promise<number>((res) => {
+        timer = setTimeout(() => res(TIMED_OUT), 90_000);
+      }),
+    ]);
+    if (timer) clearTimeout(timer);
+    tlog('borrow › _claimPayout TOTAL (the "Disburse USDC · update limit" step)', _t, disbursed === TIMED_OUT ? 'TIMED OUT → background' : '');
     tlog('borrow ✦ GRAND TOTAL', _tB);
+    if (disbursed === TIMED_OUT || disbursed === -1) {
+      // disburse still in flight / threshold slow → background claim + recovery finish it
+      return { approved: true, disbursed: 0, txHash: reqReceipt.transactionHash, pending: true };
+    }
+    // disbursed > 0 = realized; disbursed === 0 = FHE.select gated the draw to 0 (over limit)
     return { approved: disbursed > 0, disbursed, txHash: reqReceipt.transactionHash };
   }
 
