@@ -1,0 +1,17 @@
+node_modules
+dist
+dist-ssr
+*.local
+.vite
+.DS_Store
+npm-debug.log*
+
+# secrets — NEVER commit. A private key in any .env Vite bundles would be
+# exposed to the browser. Keep deploy keys in contracts/.env only.
+.env
+.env.*
+!.env.example
+
+# local-only — not part of the app: Claude Code session state + design reference mockups
+.claude/
+Desain/

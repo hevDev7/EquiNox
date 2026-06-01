@@ -1,0 +1,9 @@
+out/
+cache/
+node_modules/
+broadcast/
+
+# secrets — NEVER commit (private keys live here)
+.env
+.env.*
+!.env.example

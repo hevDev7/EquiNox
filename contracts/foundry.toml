@@ -1,0 +1,28 @@
+[profile.default.invariant]
+runs = 16
+depth = 24
+fail_on_revert = false
+
+[profile.default]
+src = "src"
+out = "out"
+test = "test"
+libs = ["lib"]
+solc = "0.8.25"
+evm_version = "cancun"
+optimizer = true
+optimizer_runs = 1 # size-first: FHE-precompile-dominated so runtime optimizer gas is noise; keeps EquinoxPoolV2 under EIP-170 24576
+via_ir = true # confidential pool's euint128 math is local-variable heavy ("stack too deep")
+code_size_limit = 100000 # CoFHE mock contracts exceed the 24KB EIP-170 limit (Fhenix template convention)
+isolate = true # AUDIT: each call runs in its own tx so FHE.allow ACL checks are actually enforced
+fs_permissions = [{ access = "read", path = "./" }]
+remappings = [
+  "@fhenixprotocol/cofhe-contracts/=node_modules/@fhenixprotocol/cofhe-contracts/",
+  "@cofhe/foundry-plugin/=node_modules/@cofhe/foundry-plugin/",
+  "@cofhe/mock-contracts/=node_modules/@cofhe/mock-contracts/",
+  "@openzeppelin/contracts/=node_modules/@openzeppelin/contracts/",
+  "@openzeppelin/contracts-upgradeable/=node_modules/@openzeppelin/contracts-upgradeable/",
+  "@pythnetwork/=node_modules/@pythnetwork/",
+  "forge-std/=lib/forge-std/src/",
+  "hardhat/console.sol=lib/forge-std/src/console.sol",
+]

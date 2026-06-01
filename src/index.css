@@ -1,0 +1,280 @@
+/* ============================================================
+   Equinox — Confidential Equities Lending Primitive
+   Design tokens + base styles
+   Type:  Spectral (display serif) · Hanken Grotesk (UI sans) · IBM Plex Mono (ciphertext)
+   Themes: Sterling (light) · Obsidian (dark) · Vellum (cool light)
+   ============================================================ */
+
+@import url('https://fonts.googleapis.com/css2?family=Spectral:ital,wght@0,300;0,400;0,500;0,600;1,400;1,500&family=Hanken+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+
+/* ---------- THEME: Sterling (default, light private-banking) ---------- */
+:root,
+.theme-sterling {
+  --bg:          oklch(0.971 0.005 85);
+  --bg-sunken:   oklch(0.945 0.006 85);
+  --surface:     oklch(0.995 0.003 85);
+  --surface-2:   oklch(0.984 0.004 85);
+  --surface-ink: oklch(0.255 0.012 265);
+  --ink:         oklch(0.245 0.012 265);
+  --ink-2:       oklch(0.435 0.011 265);
+  --ink-3:       oklch(0.585 0.009 265);
+  --ink-faint:   oklch(0.70 0.008 265);
+  --line:        oklch(0.895 0.006 85);
+  --line-2:      oklch(0.845 0.007 85);
+
+  --accent:      oklch(0.555 0.072 196);
+  --accent-ink:  oklch(0.40 0.07 196);
+  --accent-soft: oklch(0.955 0.022 196);
+  --accent-line: oklch(0.86 0.04 196);
+
+  --positive:    oklch(0.55 0.085 152);
+  --positive-soft: oklch(0.95 0.03 152);
+  --warn:        oklch(0.64 0.115 66);
+  --warn-soft:   oklch(0.955 0.04 80);
+  --danger:      oklch(0.55 0.16 26);
+  --danger-soft: oklch(0.955 0.035 30);
+
+  --shadow-sm: 0 1px 2px oklch(0.25 0.02 265 / 0.05), 0 1px 1px oklch(0.25 0.02 265 / 0.04);
+  --shadow:    0 2px 4px oklch(0.25 0.02 265 / 0.05), 0 8px 24px oklch(0.25 0.02 265 / 0.07);
+  --shadow-lg: 0 4px 8px oklch(0.25 0.02 265 / 0.06), 0 24px 56px oklch(0.25 0.02 265 / 0.12);
+  --seal-glow: 0 0 0 1px var(--accent-line), 0 6px 20px oklch(0.55 0.07 196 / 0.12);
+}
+
+/* ---------- THEME: Obsidian (dark, confidential terminal) ---------- */
+.theme-obsidian {
+  --bg:          oklch(0.185 0.012 265);
+  --bg-sunken:   oklch(0.155 0.012 265);
+  --surface:     oklch(0.225 0.014 265);
+  --surface-2:   oklch(0.262 0.016 265);
+  --surface-ink: oklch(0.93 0.006 85);
+  --ink:         oklch(0.935 0.006 85);
+  --ink-2:       oklch(0.755 0.009 265);
+  --ink-3:       oklch(0.605 0.012 265);
+  --ink-faint:   oklch(0.48 0.012 265);
+  --line:        oklch(0.315 0.016 265);
+  --line-2:      oklch(0.375 0.018 265);
+
+  --accent:      oklch(0.745 0.105 188);
+  --accent-ink:  oklch(0.82 0.10 188);
+  --accent-soft: oklch(0.30 0.05 192);
+  --accent-line: oklch(0.42 0.07 192);
+
+  --positive:    oklch(0.74 0.12 158);
+  --positive-soft: oklch(0.30 0.05 158);
+  --warn:        oklch(0.78 0.13 75);
+  --warn-soft:   oklch(0.33 0.06 75);
+  --danger:      oklch(0.66 0.17 26);
+  --danger-soft: oklch(0.32 0.08 26);
+
+  --shadow-sm: 0 1px 2px oklch(0 0 0 / 0.30);
+  --shadow:    0 2px 6px oklch(0 0 0 / 0.35), 0 12px 32px oklch(0 0 0 / 0.40);
+  --shadow-lg: 0 8px 16px oklch(0 0 0 / 0.40), 0 32px 64px oklch(0 0 0 / 0.55);
+  --seal-glow: 0 0 0 1px var(--accent-line), 0 0 24px oklch(0.70 0.10 190 / 0.22);
+}
+
+/* ---------- THEME: Vellum (cool light, indigo privacy accent) ---------- */
+.theme-vellum {
+  --bg:          oklch(0.972 0.004 250);
+  --bg-sunken:   oklch(0.948 0.006 250);
+  --surface:     oklch(0.997 0.002 250);
+  --surface-2:   oklch(0.985 0.004 250);
+  --surface-ink: oklch(0.26 0.02 275);
+  --ink:         oklch(0.255 0.022 275);
+  --ink-2:       oklch(0.44 0.02 275);
+  --ink-3:       oklch(0.585 0.018 275);
+  --ink-faint:   oklch(0.70 0.014 275);
+  --line:        oklch(0.90 0.008 255);
+  --line-2:      oklch(0.85 0.01 255);
+
+  --accent:      oklch(0.525 0.135 282);
+  --accent-ink:  oklch(0.42 0.13 282);
+  --accent-soft: oklch(0.955 0.028 282);
+  --accent-line: oklch(0.84 0.06 282);
+
+  --positive:    oklch(0.54 0.10 168);
+  --positive-soft: oklch(0.95 0.03 168);
+  --warn:        oklch(0.62 0.12 64);
+  --warn-soft:   oklch(0.955 0.04 76);
+  --danger:      oklch(0.54 0.17 22);
+  --danger-soft: oklch(0.955 0.035 26);
+
+  --shadow-sm: 0 1px 2px oklch(0.26 0.04 275 / 0.06);
+  --shadow:    0 2px 4px oklch(0.26 0.04 275 / 0.05), 0 8px 24px oklch(0.26 0.04 275 / 0.09);
+  --shadow-lg: 0 4px 8px oklch(0.26 0.04 275 / 0.07), 0 24px 56px oklch(0.26 0.04 275 / 0.14);
+  --seal-glow: 0 0 0 1px var(--accent-line), 0 6px 20px oklch(0.52 0.12 282 / 0.14);
+}
+
+/* ---------- density ---------- */
+:root { --pad: 1; }
+.density-compact { --pad: 0.82; }
+.density-comfy   { --pad: 1.18; }
+
+/* ============================================================ */
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body { height: 100%; }
+
+body {
+  font-family: 'Hanken Grotesk', system-ui, sans-serif;
+  background: var(--bg);
+  color: var(--ink);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  font-size: 16px;
+  line-height: 1.45;
+  letter-spacing: -0.006em;
+  transition: background 0.4s ease, color 0.4s ease;
+}
+
+#root { min-height: 100%; }
+
+::selection { background: var(--accent-soft); color: var(--accent-ink); }
+
+.serif { font-family: 'Spectral', Georgia, serif; letter-spacing: -0.01em; }
+.mono  { font-family: 'IBM Plex Mono', ui-monospace, monospace; letter-spacing: 0; }
+
+h1,h2,h3,h4 { font-weight: 500; line-height: 1.1; }
+
+button { font-family: inherit; cursor: pointer; border: none; background: none; color: inherit; }
+input { font-family: inherit; }
+a { color: inherit; text-decoration: none; }
+
+.eyebrow {
+  font-size: 11.5px; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+/* ---------- buttons ---------- */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  padding: calc(11px * var(--pad)) calc(20px * var(--pad));
+  border-radius: 9px; font-size: 14px; font-weight: 600; letter-spacing: -0.01em;
+  background: var(--surface); color: var(--ink); border: 1px solid var(--line-2);
+  transition: all 0.16s ease; white-space: nowrap;
+}
+.btn:hover { border-color: var(--ink-faint); transform: translateY(-1px); box-shadow: var(--shadow-sm); }
+.btn:active { transform: translateY(0); }
+.btn-primary {
+  background: var(--ink); color: var(--bg); border-color: var(--ink);
+}
+.theme-obsidian .btn-primary { background: var(--accent); color: oklch(0.16 0.01 265); border-color: var(--accent); }
+.btn-primary:hover { box-shadow: var(--shadow); }
+.btn-accent { background: var(--accent); color: white; border-color: var(--accent); }
+.theme-obsidian .btn-accent { color: oklch(0.16 0.01 265); }
+.btn-ghost { background: transparent; border-color: transparent; color: var(--ink-2); }
+.btn-ghost:hover { background: var(--surface-2); border-color: var(--line); }
+.btn:disabled { opacity: 0.45; cursor: not-allowed; transform: none !important; box-shadow: none !important; }
+.btn-lg { padding: calc(14px * var(--pad)) calc(26px * var(--pad)); font-size: 16px; border-radius: 11px; }
+.btn-sm { padding: 7px 13px; font-size: 13px; border-radius: 7px; }
+
+/* ---------- card ---------- */
+.card {
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: 16px; box-shadow: var(--shadow-sm);
+}
+
+/* ---------- encrypted value / seal ---------- */
+.cipher {
+  font-family: 'IBM Plex Mono', monospace; font-weight: 500;
+  color: var(--accent); letter-spacing: 0.02em;
+  font-variant-ligatures: none;
+}
+.sealed {
+  display: inline-flex; align-items: baseline; gap: 0.4ch;
+  position: relative;
+}
+.seal-dot {
+  display: inline-block; width: 6px; height: 6px; border-radius: 50%;
+  background: var(--accent); opacity: 0.85;
+}
+
+@keyframes revealIn {
+  from { opacity: 0; filter: blur(6px); transform: translateY(2px); }
+  to   { opacity: 1; filter: blur(0); transform: translateY(0); }
+}
+.reveal-in { animation: revealIn 0.45s cubic-bezier(0.2,0.7,0.2,1) both; }
+
+/* page/section entrance — transform ONLY so content is never gated on opacity
+   (offscreen/throttled animation clocks must not hide content) */
+@keyframes riseIn { from { transform: translateY(9px); } to { transform: translateY(0); } }
+
+@keyframes pulseRing {
+  0% { box-shadow: 0 0 0 0 var(--accent-soft); }
+  70% { box-shadow: 0 0 0 10px transparent; }
+  100% { box-shadow: 0 0 0 0 transparent; }
+}
+
+/* redacted bar */
+.redacted {
+  display: inline-block; background: var(--ink); color: transparent;
+  border-radius: 4px; user-select: none;
+  background-image: repeating-linear-gradient(90deg, var(--ink) 0 6px, var(--ink-2) 6px 7px);
+}
+.theme-obsidian .redacted { background-image: repeating-linear-gradient(90deg, var(--ink-3) 0 6px, var(--ink-faint) 6px 7px); }
+
+/* ---------- pills / badges ---------- */
+.pill {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 4px 11px; border-radius: 999px; font-size: 12px; font-weight: 600;
+  letter-spacing: -0.005em; border: 1px solid var(--line-2);
+}
+.pill-accent { background: var(--accent-soft); color: var(--accent-ink); border-color: var(--accent-line); }
+.pill-positive { background: var(--positive-soft); color: var(--positive); border-color: transparent; }
+.pill-warn { background: var(--warn-soft); color: var(--warn); border-color: transparent; }
+.pill-danger { background: var(--danger-soft); color: var(--danger); border-color: transparent; }
+
+.dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+
+/* ---------- inputs ---------- */
+.field {
+  width: 100%; padding: 13px 15px; border-radius: 11px;
+  background: var(--surface-2); border: 1px solid var(--line-2); color: var(--ink);
+  font-size: 16px; transition: border-color 0.15s, box-shadow 0.15s; outline: none;
+}
+.field:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.field::placeholder { color: var(--ink-faint); }
+
+/* ---------- scrollbar ---------- */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { background: var(--line-2); border-radius: 6px; border: 2px solid var(--bg); }
+::-webkit-scrollbar-thumb:hover { background: var(--ink-faint); }
+
+/* ---------- progress bar (FHE latency) ---------- */
+.track { height: 4px; border-radius: 4px; background: var(--line); overflow: hidden; }
+.track > span { display: block; height: 100%; background: var(--accent); border-radius: 4px; transition: width 0.3s ease; }
+
+/* ---------- gauge ---------- */
+@keyframes spin { to { transform: rotate(360deg); } }
+.spinner {
+  width: 16px; height: 16px; border-radius: 50%;
+  border: 2px solid var(--accent-line); border-top-color: var(--accent);
+  animation: spin 0.8s linear infinite;
+}
+
+/* utility */
+.grow { flex: 1; }
+.tabnum { font-variant-numeric: tabular-nums; }
+.divider { height: 1px; background: var(--line); border: none; }
+.fade-up { animation: riseIn 0.5s cubic-bezier(0.2,0.7,0.2,1) both; }
+
+/* deposit drawer — stack the form into a single column inside the narrow panel */
+.eq-drawer .action-grid { grid-template-columns: 1fr !important; }
+
+/* ---------- responsive ---------- */
+@media (max-width: 960px) {
+  .gate-grid { grid-template-columns: 1fr !important; }
+  .dash-top { grid-template-columns: 1fr !important; }
+  .action-grid { grid-template-columns: 1fr !important; }
+  .liq-top { grid-template-columns: 1fr !important; }
+  .chain-cols { grid-template-columns: 1fr !important; }
+  .app-body { grid-template-columns: 1fr !important; }
+  .side-nav { position: sticky; top: 62px; z-index: 80; background: var(--bg);
+    margin: -8px -16px 4px; padding: 8px 16px; border-bottom: 1px solid var(--line); }
+  .side-nav > div { position: static !important; flex-direction: row !important; overflow-x: auto;
+    gap: 6px !important; padding-bottom: 2px; }
+  .side-nav .card { display: none; }
+  .side-nav button { white-space: nowrap; }
+}
+@media (max-width: 560px) {
+  body { font-size: 15px; }
+}
