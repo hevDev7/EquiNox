@@ -43,18 +43,20 @@ function Sparkline({ sym, up }: { sym: string; up: boolean }) {
   );
 }
 
-function Mover({ a, kind }: { a: Asset; kind: 'gain' | 'loss' }) {
+function Mover({ a, kind }: { a?: Asset; kind: 'gain' | 'loss' }) {
   const col = kind === 'gain' ? 'var(--positive)' : 'var(--danger)';
-  const loading = a?.price == null;
+  const p = a?.price;
+  const c = a?.chg;
+  const loading = p == null;
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 13px', borderRadius: 12, background: 'var(--surface-2)', border: '1px solid var(--line)', minWidth: 168 }}>
+    <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 13px', borderRadius: 12, background: 'var(--surface-2)', border: '1px solid var(--line)', minWidth: 0 }}>
       <AssetMark sym={a?.sym ?? 'dTSLA'} size={30} />
       <div className="grow" style={{ minWidth: 0 }}>
         <div style={{ fontWeight: 600, fontSize: 14 }}>{(a?.sym ?? '—').replace(/^d/, '')}</div>
-        <div className="mono" style={{ fontSize: 12, color: 'var(--ink-3)' }}>{loading ? <Skeleton w={48} h={12} /> : <FlashPrice price={a.price ?? 0} size={12} weight={500} base="var(--ink-3)" />}</div>
+        <div className="mono" style={{ fontSize: 12, color: 'var(--ink-3)' }}>{loading ? <Skeleton w={48} h={12} /> : <FlashPrice price={p ?? 0} size={12} weight={500} base="var(--ink-3)" />}</div>
       </div>
-      <div className="tabnum" style={{ fontWeight: 700, fontSize: 13, color: loading || a?.chg == null ? 'var(--ink-faint)' : col }}>
-        {loading ? '··' : a?.chg == null ? '—' : `${a.chg >= 0 ? '+' : ''}${a.chg.toFixed(2)}%`}
+      <div className="tabnum" style={{ fontWeight: 700, fontSize: 13, color: loading || c == null ? 'var(--ink-faint)' : col, flex: 'none' }}>
+        {loading ? '··' : c == null ? '—' : `${c >= 0 ? '+' : ''}${c.toFixed(2)}%`}
       </div>
     </div>
   );
@@ -137,13 +139,14 @@ export function MarketsPanel({ onDeposit, assets = ASSETS, tvl = {} }: { onDepos
   const [filter, setFilter] = useState<Filter>('all');
 
   const all = useMemo(() => Object.values(assets).filter((a) => a.sym !== 'USDC'), [assets]);
-  // gainer = highest 24h change, loser = lowest — taken from OPPOSITE ends of the chg-sorted
-  // list (only assets that actually have a live change), so they're never the same asset. Before
-  // ≥2 changes have loaded, fall back to distinct first/last entries (transient skeleton state).
-  const { topGainer, topLoser } = useMemo(() => {
+  // Top 4 gainers + top 4 losers — both ends of the chg-sorted list (only assets with a live
+  // change). `losers` starts past the gainers' slots so the two never overlap when few names
+  // have loaded; reversed so the biggest loser leads.
+  const { topGainers, topLosers } = useMemo(() => {
     const withChg = all.filter((a) => a.chg != null).sort((x, y) => (y.chg as number) - (x.chg as number));
-    if (withChg.length >= 2) return { topGainer: withChg[0], topLoser: withChg[withChg.length - 1] };
-    return { topGainer: all[0], topLoser: all[all.length - 1] };
+    const gainers = withChg.slice(0, 4);
+    const losers = withChg.slice(Math.max(4, withChg.length - 4)).reverse();
+    return { topGainers: gainers, topLosers: losers };
   }, [all]);
 
   // oracle freshness for the status pill — honest: connecting → live → (partial) last close
@@ -199,15 +202,23 @@ export function MarketsPanel({ onDeposit, assets = ASSETS, tvl = {} }: { onDepos
           </div>
         </div>
 
-        {/* top movers */}
-        <div style={{ display: 'flex', gap: 12, marginTop: 16, flexWrap: 'wrap' }}>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
-            <span className="eyebrow" style={{ fontSize: 12 }}>Top gainer</span>
-            <Mover a={topGainer} kind="gain" />
+        {/* top movers — two columns: Top Gainers (4) | Top Losers (4) */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginTop: 16 }}>
+          <div>
+            <span className="eyebrow" style={{ fontSize: 12, color: 'var(--positive)' }}>Top Gainers</span>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 7 }}>
+              {Array.from({ length: 4 }).map((_, i) => (
+                <Mover key={`g${i}`} a={topGainers[i]} kind="gain" />
+              ))}
+            </div>
           </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
-            <span className="eyebrow" style={{ fontSize: 12 }}>Top loser</span>
-            <Mover a={topLoser} kind="loss" />
+          <div>
+            <span className="eyebrow" style={{ fontSize: 12, color: 'var(--danger)' }}>Top Losers</span>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 7 }}>
+              {Array.from({ length: 4 }).map((_, i) => (
+                <Mover key={`l${i}`} a={topLosers[i]} kind="loss" />
+              ))}
+            </div>
           </div>
         </div>
 

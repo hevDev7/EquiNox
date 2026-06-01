@@ -16,7 +16,7 @@ import { getTxHistory, addTxHistory, type TxHistoryEntry } from './lib/tx-histor
 import { useTweaks } from './hooks/useTweaks';
 import { TweakCtx } from './context/TweakContext';
 import { useServices } from './context/ServiceContext';
-import type { PositionSnapshot } from './services/types';
+import type { PositionSnapshot, PriceMap } from './services/types';
 import { shortAddress } from './services/mock-wallet';
 import { Toast, type ToastInfo } from './components/primitives';
 import { ConnectGate, KycFlow } from './components/onboarding';
@@ -54,6 +54,71 @@ const INITIAL_ASSETS: AssetMap = Object.fromEntries(
   Object.entries(ASSETS).map(([sym, a]) => [sym, { ...a, price: undefined, chg: undefined }]),
 );
 
+// Persist the last price snapshot (incl. 24h change + its ~24h anchor) so a page reload / new
+// tab shows the last-known prices + 24H INSTANTLY instead of blanking out while the first Pyth
+// fetch (and its Benchmarks anchor round-trip) lands. Live updates then replace them in place.
+const PRICE_SNAP_KEY = 'equinox.priceSnap';
+function loadPriceSnap(): PriceMap {
+  try {
+    return JSON.parse(localStorage.getItem(PRICE_SNAP_KEY) || '{}') as PriceMap;
+  } catch {
+    return {};
+  }
+}
+function savePriceSnap(prices: PriceMap): void {
+  try {
+    localStorage.setItem(PRICE_SNAP_KEY, JSON.stringify(prices));
+  } catch {
+    /* storage unavailable — best-effort */
+  }
+}
+/** Seed the asset map from the persisted snapshot. Prices older than the staleness window are
+ *  re-marked stale so cached values read as "last close", never masquerade as fresh-live. */
+function seedAssets(snap: PriceMap): AssetMap {
+  const nowSec = Math.floor(Date.now() / 1000);
+  const out: AssetMap = { ...INITIAL_ASSETS };
+  for (const [sym, s] of Object.entries(snap)) {
+    if (!out[sym] || s.price == null) continue;
+    out[sym] = {
+      ...out[sym],
+      price: s.price,
+      chg: s.chg,
+      ref24h: s.ref24h,
+      asOf: s.asOf,
+      stale: s.asOf != null ? nowSec - s.asOf > 300 : s.stale,
+      session: s.session,
+    };
+  }
+  return out;
+}
+
+// Persist the (already client-decrypted) position + blinded factors PER WALLET, so collateral
+// and loan/debt render instantly on reload instead of blanking while fetchPosition re-reads and
+// FHE-decrypts the sealed balances. Same device + same user (the blinding secret is already
+// cached client-side); the fresh on-chain read that runs on mount overwrites this in place.
+interface PosSnap {
+  position: Position;
+  facts: { A: number; B: number; hfBps: number | null } | null;
+  indexBps: number;
+  weekend: boolean;
+}
+const posSnapKey = (addr: string) => `equinox.posSnap.${addr.toLowerCase()}`;
+function loadPosSnap(addr: string): PosSnap | null {
+  try {
+    const v = localStorage.getItem(posSnapKey(addr));
+    return v ? (JSON.parse(v) as PosSnap) : null;
+  } catch {
+    return null;
+  }
+}
+function savePosSnap(addr: string, snap: PosSnap): void {
+  try {
+    localStorage.setItem(posSnapKey(addr), JSON.stringify(snap));
+  } catch {
+    /* storage unavailable — best-effort */
+  }
+}
+
 const TWEAK_DEFAULTS: Tweaks = {
   theme: 'sterling',
   accent: 'Teal',
@@ -77,7 +142,7 @@ export default function App() {
   const [toast, setToast] = useState<ToastInfo | null>(null);
   const [now, setNow] = useState(Date.now());
   const [depositOpen, setDepositOpen] = useState(false);
-  const [liveAssets, setLiveAssets] = useState<AssetMap>(INITIAL_ASSETS);
+  const [liveAssets, setLiveAssets] = useState<AssetMap>(() => seedAssets(loadPriceSnap()));
   const [chainIndex, setChainIndex] = useState<number | undefined>(undefined);
   const [liq, setLiq] = useState({ available: 0, totalSupplied: 0, myShares: 0, supplyApyBps: 0, borrowApyBps: 0, utilizationBps: 0 });
   const [weekendChain, setWeekendChain] = useState(false); // contract's isWeekendMode (weekendOverride-aware)
@@ -102,6 +167,7 @@ export default function App() {
       try {
         const prices = await equinox.fetchPrices();
         if (!alive) return;
+        savePriceSnap(prices); // persist so a reload shows last-known prices + 24H instantly
         setLiveAssets((prev) => {
           const next: AssetMap = { ...prev };
           for (const [sym, p] of Object.entries(prices)) {
@@ -166,17 +232,35 @@ export default function App() {
     [address],
   );
 
+  // seed the cached position/factors for this wallet so collateral + loan render INSTANTLY on
+  // reload; the on-chain refresh below then replaces them with freshly decrypted values.
+  useEffect(() => {
+    if (!USE_REAL_CHAIN || !address) return;
+    const c = loadPosSnap(address);
+    if (!c) return;
+    setPos(c.position);
+    setChainFacts(c.facts);
+    setChainIndex(c.indexBps / 10_000);
+    setWeekendChain(c.weekend);
+  }, [address]);
+
   // read the user's REAL on-chain position (no-op in mock mode)
-  const applySnapshot = useCallback((snap: PositionSnapshot) => {
-    setPos(snap.position);
-    setChainIndex(snap.indexBps / 10_000);
-    setWeekendChain(snap.weekendOnChain);
-    setChainFacts(
-      snap.factorA != null && snap.factorB != null
-        ? { A: snap.factorA, B: snap.factorB, hfBps: snap.hfBps ?? null }
-        : null,
-    );
-  }, []);
+  const applySnapshot = useCallback(
+    (snap: PositionSnapshot) => {
+      const facts =
+        snap.factorA != null && snap.factorB != null
+          ? { A: snap.factorA, B: snap.factorB, hfBps: snap.hfBps ?? null }
+          : null;
+      setPos(snap.position);
+      setChainIndex(snap.indexBps / 10_000);
+      setWeekendChain(snap.weekendOnChain);
+      setChainFacts(facts);
+      if (USE_REAL_CHAIN && address) {
+        savePosSnap(address, { position: snap.position, facts, indexBps: snap.indexBps, weekend: snap.weekendOnChain });
+      }
+    },
+    [address],
+  );
 
   const refreshPosition = useCallback(async () => {
     if (!USE_REAL_CHAIN || !address) return;
