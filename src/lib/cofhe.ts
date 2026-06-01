@@ -69,28 +69,23 @@ export async function ensureCofhe(pub: PublicClient, wallet: WalletClient): Prom
 }
 
 /**
- * Ensure a VALID self-permit for the connected account (AUDIT #3). Reuses the
- * active permit when it is a non-expired self-permit (zero signatures on the
- * happy path); otherwise drops the stale one and mints a fresh one. Note
- * `getOrCreateSelfPermit()` alone is insufficient — it can return an expired permit.
+ * Ensure a VALID self-permit for the connected account.
+ *
+ * Delegates reuse to the SDK: `getOrCreateSelfPermit()` resolves chainId/account from the
+ * connected client, RETURNS the active self-permit WITHOUT re-signing (default lifetime is
+ * 7 days), and only mints when none exists. The previous implementation pre-checked with our
+ * own `_chainId`/`_account` module vars and `removeActivePermit()`+re-minted when that check
+ * missed — which dropped a perfectly valid permit and forced a FRESH MetaMask signature on
+ * essentially every position read ("signature pop-up appears over and over"). We now trust the
+ * SDK's get-or-create and only single-flight concurrent callers so they share ONE mint instead
+ * of each opening a prompt. A genuinely stale/expired permit is handled by the decrypt-failure
+ * recovery path (`refreshPermit` via onRefreshPermit / the sealoutput-403 handler), not by
+ * pre-emptively re-minting here.
  */
 export async function ensurePermit(): Promise<void> {
-  const permits = getClient().permits;
-  try {
-    const active = permits.getActivePermit(_chainId, _account);
-    const now = Math.floor(Date.now() / 1000);
-    // reuse only a non-expired self-permit (expiration is unix seconds)
-    if (active && active.type === 'self' && Number(active.expiration) > now) return;
-    if (active) permits.removeActivePermit(_chainId, _account);
-  } catch {
-    /* fall through to mint a fresh permit */
-  }
-  // SINGLE-FLIGHT: many decrypts/position-reads run concurrently and all need the permit;
-  // mint ONCE and let everyone await the same promise → a single signature prompt, not one
-  // per caller. (`getActivePermit` above still short-circuits once the minted permit is cached.)
   if (!_permitMint) {
-    _permitMint = permits
-      .getOrCreateSelfPermit()
+    _permitMint = getClient()
+      .permits.getOrCreateSelfPermit()
       .then(() => undefined)
       .finally(() => {
         _permitMint = null;
