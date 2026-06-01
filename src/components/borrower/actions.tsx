@@ -722,7 +722,9 @@ export function RepayScreen({
   onRefreshPermit?: () => Promise<void>;
 }) {
   const [tab, setTab] = useState<'repay' | 'unwrap'>('repay');
-  const [claimingId, setClaimingId] = useState<string | null>(null);
+  // track EACH in-flight claim independently (a Set) so two pending claims can be claimed
+  // concurrently — a single claimingId would clobber the other's state when both run.
+  const [claimingIds, setClaimingIds] = useState<ReadonlySet<string>>(() => new Set());
   const [amt, setAmt] = useState('');
   const [open, setOpen] = useState<false | 'repay' | 'unwrap'>(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -880,17 +882,21 @@ export function RepayScreen({
                     {ready ? (
                       <button
                         className="btn btn-sm btn-accent"
-                        disabled={claimingId === c.id}
+                        disabled={claimingIds.has(c.id)}
                         onClick={async () => {
-                          setClaimingId(c.id);
+                          setClaimingIds((s) => new Set(s).add(c.id));
                           try {
                             await onClaim(c.id);
                           } finally {
-                            setClaimingId(null);
+                            setClaimingIds((s) => {
+                              const n = new Set(s);
+                              n.delete(c.id);
+                              return n;
+                            });
                           }
                         }}
                       >
-                        {claimingId === c.id ? (
+                        {claimingIds.has(c.id) ? (
                           <>
                             <span className="spinner" style={{ width: 11, height: 11 }} /> Claiming…
                           </>
