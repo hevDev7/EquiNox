@@ -20,6 +20,7 @@ import { createCofheClient, createCofheConfig } from '@cofhe/sdk/web';
 import { arbSepolia } from '@cofhe/sdk/chains';
 import { Encryptable, FheTypes } from '@cofhe/sdk';
 import type { Address, PublicClient, WalletClient } from 'viem';
+import { isTransient, isSealAuthRejection } from './cofhe-errors';
 
 /** Shape of an encrypted input as the contracts' `InEuint64`/`InEbool` expect.
  *  (Matches @cofhe/sdk's EncryptedItemInput 1:1.) */
@@ -115,7 +116,9 @@ function toSealed(out: any): SealedInput {
 }
 
 export async function encryptUint64(value: bigint): Promise<SealedInput> {
+  const _t = _now();
   const [out] = await getClient().encryptInputs([Encryptable.uint64(value)]).execute();
+  if (TIMING) console.log(`[equinox-timing] encryptUint64 in ${(_now() - _t).toFixed(0)}ms`);
   return toSealed(out);
 }
 
@@ -124,33 +127,31 @@ export async function encryptBool(value: boolean): Promise<SealedInput> {
   return toSealed(out);
 }
 
-/** True for transient threshold-network / fetch errors worth retrying. */
-function isTransient(e: unknown): boolean {
-  const s = String((e as { code?: string; message?: string })?.code ?? (e as Error)?.message ?? e).toLowerCase();
-  return (
-    s.includes('503') ||
-    s.includes('service unavailable') ||
-    s.includes('fetch failed') ||
-    s.includes('timeout') ||
-    s.includes('decrypt_failed') ||
-    s.includes('seal_output_failed') ||
-    s.includes('econnreset') ||
-    s.includes('other side closed')
-  );
-}
+/* [INSTR] temporary timing — mirrors the block in cofhe-equinox-service.ts. */
+const TIMING = true;
+const _now = (): number => (typeof performance !== 'undefined' ? performance.now() : Date.now());
+
+/* `isTransient` / `isSealAuthRejection` live in ./cofhe-errors (SDK-free so they're unit-tested
+ *  in isolation). A 401/403 is an auth rejection (NOT transient) → see unsealUint64's recovery. */
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 /** Retry `fn` on transient errors with bounded exponential backoff. Re-throws
  *  the last error (never swallows) so callers can surface a real failure. */
-async function withRetry<T>(fn: () => Promise<T>, tries = 5, baseMs = 1000): Promise<T> {
+async function withRetry<T>(fn: () => Promise<T>, tries = 5, baseMs = 1000, label = 'cofhe-op'): Promise<T> {
+  const _t0 = _now();
   let last: unknown;
   for (let i = 0; i < tries; i++) {
+    const _ta = _now();
     try {
-      return await fn();
+      const r = await fn();
+      if (TIMING) console.log(`[equinox-timing] ${label} attempt ${i + 1} OK in ${(_now() - _ta).toFixed(0)}ms (total ${(_now() - _t0).toFixed(0)}ms)`);
+      return r;
     } catch (e) {
       last = e;
-      if (i === tries - 1 || !isTransient(e)) throw e;
+      const transient = isTransient(e);
+      if (TIMING) console.warn(`[equinox-timing] ${label} attempt ${i + 1} FAILED in ${(_now() - _ta).toFixed(0)}ms · transient=${transient} ·`, String((e as Error)?.message ?? e));
+      if (i === tries - 1 || !transient) throw e;
       await sleep(baseMs * 2 ** i); // 1s, 2s, 4s, 8s
     }
   }
@@ -169,7 +170,27 @@ async function withRetry<T>(fn: () => Promise<T>, tries = 5, baseMs = 1000): Pro
  */
 export async function unsealUint64(handle: bigint): Promise<bigint> {
   await ensurePermit();
-  const res = await withRetry(() => getClient().decryptForView(handle, FheTypes.Uint64).withPermit().execute());
+  const seal = () =>
+    withRetry(() => getClient().decryptForView(handle, FheTypes.Uint64).withPermit().execute(), 5, 1000, 'decryptForView');
+  let res: bigint | unknown;
+  try {
+    res = await seal();
+  } catch (e) {
+    // A 403/401 on /v2/sealoutput is the threshold network REJECTING the self-permit's
+    // authorization (a stale/mismatched EIP-712 signature on a permit reused from
+    // localStorage), not a transient error. ensurePermit() reuses any non-expired self-permit
+    // WITHOUT re-validating its signature/domain, so the only recovery is to drop it, mint a
+    // freshly-signed permit, and retry ONCE. If it still 403s the permit is fine and the
+    // rejection is server-side (SDK↔testnet ACL-domain skew) — re-throw so safeUnseal() surfaces
+    // it as "unknown" (never a silent 0). See refreshPermit() / docs: cofhe-sealoutput-403.
+    if (!isSealAuthRejection(e)) throw e;
+    console.warn(
+      '[equinox] /v2/sealoutput rejected the self-permit (auth 403) — re-minting and retrying once.',
+      String((e as Error)?.message ?? e),
+    );
+    await refreshPermit();
+    res = await seal();
+  }
   if (typeof res !== 'bigint') {
     throw new Error(`cofhe decryptForView returned non-bigint for Uint64: ${typeof res}`);
   }
@@ -187,7 +208,7 @@ export async function unsealUint64(handle: bigint): Promise<bigint> {
  * and can resume — a silent 0 here would burn credit for a $0 payout.
  */
 export async function decryptForTxUint64(handle: bigint): Promise<{ value: bigint; proof: `0x${string}` }> {
-  const res = await withRetry(() => getClient().decryptForTx(handle).withoutPermit().execute());
+  const res = await withRetry(() => getClient().decryptForTx(handle).withoutPermit().execute(), 5, 1000, 'decryptForTx');
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const r = res as any;
   if (r?.decryptedValue == null || r?.signature == null) {

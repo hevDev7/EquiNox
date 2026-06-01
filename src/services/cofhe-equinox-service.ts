@@ -137,6 +137,19 @@ function randomBlinding(): bigint {
   return s < 10_000_000n ? s + 10_000_000n : s;
 }
 
+/* ============================================================
+   [INSTR] Temporary borrow-flow timing instrumentation.
+   Logs per-boundary latency to the console so we can see which await
+   dominates the "Disburse USDC · update limit" wait. Pure logging — no
+   behaviour change. Set TIMING=false (or delete this block + the tlog()/
+   _now() calls) once the dominant factor is confirmed.
+   ============================================================ */
+const TIMING = true;
+const _now = (): number => (typeof performance !== 'undefined' ? performance.now() : Date.now());
+function tlog(label: string, startMs: number, extra = ''): void {
+  if (TIMING) console.log(`[equinox-timing] ${label}: ${(_now() - startMs).toFixed(0)}ms${extra ? '  · ' + extra : ''}`);
+}
+
 export class CofheEquinoxService implements EquinoxService {
   /** Lazy so importing this module (e.g. in mock mode) never touches the chain. */
   private get pub() {
@@ -206,6 +219,7 @@ export class CofheEquinoxService implements EquinoxService {
     // still a negligible cost.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const fees: any = {};
+    let _t = _now();
     try {
       const f = await this.pub.estimateFeesPerGas();
       if (f.maxFeePerGas != null) fees.maxFeePerGas = f.maxFeePerGas * 3n;
@@ -213,6 +227,7 @@ export class CofheEquinoxService implements EquinoxService {
     } catch {
       /* fall back to wallet-managed fees */
     }
+    tlog(`send(${functionName}) estimateFeesPerGas`, _t);
     // GAS LIMIT — Arbitrum folds the L1-calldata posting cost INTO the L2 gas limit,
     // and that component is VOLATILE: `eth_estimateGas` snapshots the L1 base fee at
     // estimate time, but by the time the tx executes it can rise, pushing real usage
@@ -221,19 +236,29 @@ export class CofheEquinoxService implements EquinoxService {
     // ~117k gas but the auto-estimate handed back ~96k, so the borrow's "Disburse
     // USDC" step silently reverted and the modal hung on its last step forever.
     // Estimate ourselves, then add generous headroom — gas on Arb Sepolia is ~free.
+    _t = _now();
+    let _estOk = true;
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const est = await this.pub.estimateContractGas({ address, abi, functionName, args, account } as any);
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (fees as any).gas = est * 2n + 300_000n;
     } catch {
+      _estOk = false;
       /* estimate failed (RPC hiccup, or a genuinely reverting call) — fall back to
          the wallet's own estimate, preserving the existing revert-surfacing path */
     }
+    tlog(`send(${functionName}) estimateContractGas`, _t, _estOk ? 'ok' : 'FAILED → wallet-estimate (call may revert!)');
     // viem's generics are narrowed by const ABIs; we use runtime ABIs, so cast.
+    if (TIMING) console.log(`[equinox-timing] send(${functionName}) → calling writeContract NOW (MetaMask popup should appear)`);
+    _t = _now();
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const hash: Hash = await wc.writeContract({ address, abi, functionName, args, account, chain, ...fees } as any);
-    return this._waitForReceipt(wc, hash);
+    tlog(`send(${functionName}) writeContract resolved (popup shown + user confirmed)`, _t);
+    _t = _now();
+    const receipt = await this._waitForReceipt(wc, hash);
+    tlog(`send(${functionName}) waitForReceipt`, _t);
+    return receipt;
   }
 
   /**
@@ -314,21 +339,37 @@ export class CofheEquinoxService implements EquinoxService {
    *  BEFORE claiming, so a transient coprocessor 503 mid-claim leaves a recoverable record
    *  (see recoverBorrowPayouts) instead of stranding the sealed credit. */
   async borrow(amount: number, _limit: number): Promise<BorrowResult> {
+    const _tB = _now();
     const me = await this.account();
+    let _t = _now();
     await ensureCofhe(this.pub, await getWalletClient());
+    tlog('borrow › ensureCofhe', _t);
+    _t = _now();
     const encR = await encryptUint64(BigInt(amount));
+    tlog('borrow › encrypt R', _t);
+    _t = _now();
     const reqReceipt = await this.send(ADDRESSES.pool, poolAbi, 'requestBorrow', [encR]);
+    tlog('borrow › requestBorrow TOTAL (tx #1)', _t);
 
     // realize the sealed proceeds as real USDC (CoFHE 0.1.x proof model):
     // requestWithdraw makes the amount publicly decryptable → threshold-decrypt
     // off-chain for value+proof → claimWithdraw verifies the proof and pays out.
+    _t = _now();
     const encW = await encryptUint64(BigInt(amount));
+    tlog('borrow › encrypt W', _t);
+    _t = _now();
     await this.send(ADDRESSES.pool, poolAbi, 'requestWithdraw', [encW, true, 0n]); // USDC payout — assetId ignored
+    tlog('borrow › requestWithdraw TOTAL (tx #2)', _t);
+    _t = _now();
     const count = await this.read<bigint>(ADDRESSES.pool, poolAbi, 'withdrawalsCount');
+    tlog('borrow › read withdrawalsCount', _t);
     const withdrawId = count - 1n;
     addPendingPayout(me, { withdrawId: withdrawId.toString(), amount, ts: Date.now() });
 
+    _t = _now();
     const disbursed = await this._claimPayout(me, withdrawId);
+    tlog('borrow › _claimPayout TOTAL (the "Disburse USDC · update limit" step)', _t);
+    tlog('borrow ✦ GRAND TOTAL', _tB);
     return { approved: disbursed > 0, disbursed, txHash: reqReceipt.transactionHash };
   }
 
@@ -336,18 +377,24 @@ export class CofheEquinoxService implements EquinoxService {
    *  success. Throws (keeping the pending record) if the coprocessor is unavailable. */
   private async _claimPayout(owner: Address, withdrawId: bigint): Promise<number> {
     // withdrawals(id) → (owner, amount(euint64 handle), isUsdc, claimed, assetId)
+    let _t = _now();
     const w = await this.read<readonly [Address, bigint, boolean, boolean, bigint]>(
       ADDRESSES.pool,
       poolAbi,
       'withdrawals',
       [withdrawId],
     );
+    tlog('claimPayout › read withdrawals', _t);
     if (w[3]) {
       removePendingPayout(owner, withdrawId.toString()); // already claimed
       return 0;
     }
+    _t = _now();
     const { value, proof } = await decryptForTxUint64(BigInt(w[1]));
+    tlog('claimPayout › decryptForTx ★ THRESHOLD-DECRYPT (off-chain; NO popup; gates claimWithdraw)', _t);
+    _t = _now();
     await this.send(ADDRESSES.pool, poolAbi, 'claimWithdraw', [withdrawId, value, proof]);
+    tlog('claimPayout › claimWithdraw TOTAL (tx #3 — the disburse confirm popup)', _t);
     removePendingPayout(owner, withdrawId.toString());
     return Number(value);
   }

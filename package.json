@@ -8,7 +8,8 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "node --experimental-strip-types scripts/cofhe-errors.test.mjs && tsc --noEmit"
   },
   "dependencies": {
     "@cofhe/sdk": "^0.5.2",
