@@ -36,6 +36,9 @@ let _client: ReturnType<typeof createCofheClient> | null = null;
 let _connectedKey: string | null = null;
 let _account: Address | undefined;
 let _chainId: number | undefined;
+// single-flight guard: when a self-permit is being minted, concurrent callers share the SAME
+// promise instead of each opening their own MetaMask signature request ("1 of N" spam).
+let _permitMint: Promise<void> | null = null;
 
 function getClient(): ReturnType<typeof createCofheClient> {
   if (!_client) {
@@ -82,7 +85,18 @@ export async function ensurePermit(): Promise<void> {
   } catch {
     /* fall through to mint a fresh permit */
   }
-  await permits.getOrCreateSelfPermit();
+  // SINGLE-FLIGHT: many decrypts/position-reads run concurrently and all need the permit;
+  // mint ONCE and let everyone await the same promise → a single signature prompt, not one
+  // per caller. (`getActivePermit` above still short-circuits once the minted permit is cached.)
+  if (!_permitMint) {
+    _permitMint = permits
+      .getOrCreateSelfPermit()
+      .then(() => undefined)
+      .finally(() => {
+        _permitMint = null;
+      });
+  }
+  await _permitMint;
 }
 
 /**
