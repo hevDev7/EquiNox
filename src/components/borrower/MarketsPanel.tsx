@@ -7,6 +7,7 @@
    ============================================================ */
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { createPortal } from 'react-dom';
 import { ASSETS } from '../../lib/mock-data';
 import { SECTORS, SECTOR_OF, type SectorKey } from '../../config/stocks';
 import { PROTOCOL } from '../../lib/protocol';
@@ -138,9 +139,12 @@ function fmtVol(v: number): string {
  *  no separate "All" chip — clicking the active sector toggles it off (= all sectors). */
 function SectorFilter({ value, onChange }: { value: SectorKey | null; onChange: (s: SectorKey | null) => void }) {
   const ref = useRef<HTMLDivElement>(null);
+  const moreBtn = useRef<HTMLButtonElement>(null);
   const widths = useRef<number[]>([]);
   const [fit, setFit] = useState(SECTORS.length);
   const [open, setOpen] = useState(false);
+  // fixed-viewport anchor for the portaled dropdown (escapes the row's overflow:hidden clip)
+  const [pos, setPos] = useState<{ top: number; right: number } | null>(null);
 
   useLayoutEffect(() => {
     const el = ref.current;
@@ -183,6 +187,24 @@ function SectorFilter({ value, onChange }: { value: SectorKey | null; onChange: 
     onChange(value === k ? null : k); // toggle: clicking the active sector clears it
     setOpen(false);
   };
+  const toggle = () => {
+    if (!open && moreBtn.current) {
+      const r = moreBtn.current.getBoundingClientRect();
+      setPos({ top: r.bottom + 6, right: Math.max(8, window.innerWidth - r.right) });
+    }
+    setOpen((o) => !o);
+  };
+  // the dropdown is fixed-positioned, so close it if the page scrolls/resizes under it
+  useEffect(() => {
+    if (!open) return;
+    const close = () => setOpen(false);
+    window.addEventListener('scroll', close, true);
+    window.addEventListener('resize', close);
+    return () => {
+      window.removeEventListener('scroll', close, true);
+      window.removeEventListener('resize', close);
+    };
+  }, [open]);
   const inline = SECTORS.slice(0, fit);
   const overflow = SECTORS.slice(fit);
 
@@ -194,38 +216,40 @@ function SectorFilter({ value, onChange }: { value: SectorKey | null; onChange: 
         </button>
       ))}
       {overflow.length > 0 && (
-        <div style={{ position: 'relative', flex: 'none' }}>
-          <button className="btn btn-sm" onClick={() => setOpen((o) => !o)} style={chipStyle(overflow.some((s) => s.key === value))}>
+        <div style={{ flex: 'none' }}>
+          <button ref={moreBtn} className="btn btn-sm" onClick={toggle} style={chipStyle(open || overflow.some((s) => s.key === value))}>
             +{overflow.length} more ▾
           </button>
-          {open && (
-            <>
-              <div onClick={() => setOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 60 }} />
-              <div
-                style={{
-                  position: 'absolute',
-                  top: 'calc(100% + 6px)',
-                  right: 0,
-                  zIndex: 61,
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: 4,
-                  padding: 6,
-                  minWidth: 150,
-                  background: 'var(--surface)',
-                  border: '1px solid var(--line-2)',
-                  borderRadius: 10,
-                  boxShadow: 'var(--shadow-lg)',
-                }}
-              >
-                {overflow.map((s) => (
-                  <button key={s.key} onClick={() => pick(s.key)} className="btn btn-sm" style={{ ...chipStyle(value === s.key), justifyContent: 'flex-start' }}>
-                    {s.label}
-                  </button>
-                ))}
-              </div>
-            </>
-          )}
+          {open && pos &&
+            createPortal(
+              <>
+                <div onClick={() => setOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 200 }} />
+                <div
+                  style={{
+                    position: 'fixed',
+                    top: pos.top,
+                    right: pos.right,
+                    zIndex: 201,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 4,
+                    padding: 6,
+                    minWidth: 160,
+                    background: 'var(--surface)',
+                    border: '1px solid var(--line-2)',
+                    borderRadius: 10,
+                    boxShadow: 'var(--shadow-lg)',
+                  }}
+                >
+                  {overflow.map((s) => (
+                    <button key={s.key} onClick={() => pick(s.key)} className="btn btn-sm" style={{ ...chipStyle(value === s.key), justifyContent: 'flex-start' }}>
+                      {s.label}
+                    </button>
+                  ))}
+                </div>
+              </>,
+              document.body,
+            )}
         </div>
       )}
     </div>
