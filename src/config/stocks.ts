@@ -70,3 +70,26 @@ export const STOCKS: StockMeta[] = [
 ];
 
 export const STOCK_BY_SYM: Record<string, StockMeta> = Object.fromEntries(STOCKS.map((s) => [s.sym, s]));
+
+/* ---- sector taxonomy (for the Markets filter) ---- */
+export type SectorKey = 'tech' | 'semis' | 'consumer' | 'finance' | 'crypto' | 'industrial';
+
+/** Ordered sector chips shown in the Markets filter. */
+export const SECTORS: { key: SectorKey; label: string }[] = [
+  { key: 'tech', label: 'Tech' },
+  { key: 'semis', label: 'Semiconductors' },
+  { key: 'consumer', label: 'Consumer' },
+  { key: 'finance', label: 'Finance' },
+  { key: 'crypto', label: 'Crypto' },
+  { key: 'industrial', label: 'Industrial' },
+];
+
+/** Sector of each dShare (by symbol) — every asset belongs to exactly one. */
+export const SECTOR_OF: Record<string, SectorKey> = {
+  dAAPL: 'tech', dMSFT: 'tech', dGOOGL: 'tech', dMETA: 'tech', dPLTR: 'tech',
+  dNVDA: 'semis', dAMD: 'semis', dINTC: 'semis',
+  dTSLA: 'consumer', dAMZN: 'consumer', dNKE: 'consumer', dDIS: 'consumer', dNFLX: 'consumer',
+  dJPM: 'finance', dV: 'finance',
+  dCOIN: 'crypto', dMSTR: 'crypto',
+  dBA: 'industrial',
+};

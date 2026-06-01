@@ -8,6 +8,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ASSETS } from '../../lib/mock-data';
+import { SECTORS, SECTOR_OF, type SectorKey } from '../../config/stocks';
 import { PROTOCOL } from '../../lib/protocol';
 import { fmtUSD, fmtNum } from '../../lib/format';
 import { Icon, ICON } from '../../lib/icons';
@@ -137,6 +138,7 @@ function fmtVol(v: number): string {
 export function MarketsPanel({ onDeposit, assets = ASSETS, tvl = {} }: { onDeposit: (sym: string) => void; assets?: AssetMap; tvl?: Record<string, number> }) {
   const [q, setQ] = useState('');
   const [filter, setFilter] = useState<Filter>('all');
+  const [sector, setSector] = useState<SectorKey | 'all'>('all');
 
   const all = useMemo(() => Object.values(assets).filter((a) => a.sym !== 'USDC'), [assets]);
   // Top 4 gainers + top 4 losers — both ends of the chg-sorted list (only assets with a live
@@ -163,9 +165,10 @@ export function MarketsPanel({ onDeposit, assets = ASSETS, tvl = {} }: { onDepos
     const needle = q.trim().toLowerCase();
     return all
       .filter((a) => (filter === 'gainers' ? (a.chg ?? 0) >= 0 : filter === 'losers' ? (a.chg ?? 0) < 0 : true))
+      .filter((a) => sector === 'all' || SECTOR_OF[a.sym] === sector)
       .filter((a) => !needle || a.sym.toLowerCase().includes(needle) || a.name.toLowerCase().includes(needle))
       .sort((x, y) => (y.price ?? 0) - (x.price ?? 0));
-  }, [all, q, filter]);
+  }, [all, q, filter, sector]);
 
   const chips: [Filter, string][] = [
     ['all', 'All'],
@@ -176,7 +179,7 @@ export function MarketsPanel({ onDeposit, assets = ASSETS, tvl = {} }: { onDepos
   // pagination — max 10 markets per page
   const PAGE_SIZE = 10;
   const [page, setPage] = useState(0);
-  useEffect(() => setPage(0), [q, filter]); // reset to first page when the list changes
+  useEffect(() => setPage(0), [q, filter, sector]); // reset to first page when the list changes
   const pageCount = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
   const safePage = Math.min(page, pageCount - 1);
   const start = safePage * PAGE_SIZE;
@@ -253,6 +256,28 @@ export function MarketsPanel({ onDeposit, assets = ASSETS, tvl = {} }: { onDepos
               </button>
             ))}
           </div>
+        </div>
+
+        {/* sector filter — by company category */}
+        <div style={{ display: 'flex', gap: 8, marginTop: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+          <span className="eyebrow" style={{ fontSize: 12, marginRight: 2 }}>Sector</span>
+          {([['all', 'All'], ...SECTORS.map((s) => [s.key, s.label] as [SectorKey, string])] as [SectorKey | 'all', string][]).map(
+            ([id, label]) => (
+              <button
+                key={id}
+                onClick={() => setSector(id)}
+                className="btn btn-sm"
+                style={{
+                  background: sector === id ? 'var(--accent-soft)' : 'var(--surface-2)',
+                  border: sector === id ? '1px solid var(--accent-line)' : '1px solid var(--line)',
+                  color: sector === id ? 'var(--accent-ink)' : 'var(--ink-3)',
+                  boxShadow: sector === id ? 'var(--shadow-sm)' : 'none',
+                }}
+              >
+                {label}
+              </button>
+            ),
+          )}
         </div>
       </div>
 
