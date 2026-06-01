@@ -39,6 +39,10 @@ let _chainId: number | undefined;
 // single-flight guard: when a self-permit is being minted, concurrent callers share the SAME
 // promise instead of each opening their own MetaMask signature request ("1 of N" spam).
 let _permitMint: Promise<void> | null = null;
+// latch: we re-minted the self-permit for a /v2/sealoutput 403 and it STILL 403'd → the
+// rejection is server-side (ACL-domain skew), so further re-mints are futile. Stop prompting
+// for a new signature on every sealed read until a decrypt actually succeeds (which clears it).
+let _permit403Tried = false;
 
 function getClient(): ReturnType<typeof createCofheClient> {
   if (!_client) {
@@ -184,21 +188,26 @@ export async function unsealUint64(handle: bigint): Promise<bigint> {
   let res: bigint | unknown;
   try {
     res = await seal();
+    _permit403Tried = false; // a successful decrypt clears the auth-rejection latch
   } catch (e) {
     // A 403/401 on /v2/sealoutput is the threshold network REJECTING the self-permit's
-    // authorization (a stale/mismatched EIP-712 signature on a permit reused from
-    // localStorage), not a transient error. ensurePermit() reuses any non-expired self-permit
-    // WITHOUT re-validating its signature/domain, so the only recovery is to drop it, mint a
-    // freshly-signed permit, and retry ONCE. If it still 403s the permit is fine and the
-    // rejection is server-side (SDK↔testnet ACL-domain skew) — re-throw so safeUnseal() surfaces
-    // it as "unknown" (never a silent 0). See refreshPermit() / docs: cofhe-sealoutput-403.
+    // authorization. It CAN be a stale/mismatched signature on a permit reused from
+    // localStorage (fixable by re-minting), but is usually a persistent server-side ACL-domain
+    // skew (re-minting does NOT help). So re-mint+retry AT MOST ONCE per auth-broken episode —
+    // if a freshly-signed permit STILL 403s, latch it and stop prompting for a new signature on
+    // every subsequent sealed read (debt + each collateral asset would each pop a request → spam).
+    // A later successful decrypt clears the latch. safeUnseal() surfaces the miss as "unknown"
+    // (never a silent 0); the UI carries over the last-known value. See docs: cofhe-sealoutput-403.
     if (!isSealAuthRejection(e)) throw e;
+    if (_permit403Tried) throw e; // already re-minted once this episode; don't spam another signature
+    _permit403Tried = true;
     console.warn(
-      '[equinox] /v2/sealoutput rejected the self-permit (auth 403) — re-minting and retrying once.',
+      '[equinox] /v2/sealoutput rejected the self-permit (auth 403) — re-minting ONCE and retrying.',
       String((e as Error)?.message ?? e),
     );
     await refreshPermit();
     res = await seal();
+    _permit403Tried = false; // retry succeeded → the permit was merely stale; allow future re-mints
   }
   if (typeof res !== 'bigint') {
     throw new Error(`cofhe decryptForView returned non-bigint for Uint64: ${typeof res}`);
