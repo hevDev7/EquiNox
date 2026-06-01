@@ -32,6 +32,9 @@ export interface PositionSnapshot {
   factorB?: number;
   /** REAL on-chain healthFactorBps (10000 = 1.0); undefined if factors not yet settled. */
   hfBps?: number;
+  /** dShare symbols whose SET collateral handle could NOT be decrypted this read (permit not
+   *  ready / threshold network) — the UI carries over their last-known amount instead of dropping. */
+  unreadableCollateral?: string[];
 }
 
 export interface WalletInfo {

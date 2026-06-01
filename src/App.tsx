@@ -3,7 +3,7 @@
    Wallet connection is handled by wagmi + RainbowKit.
    ============================================================ */
 
-import { useCallback, useEffect, useMemo, useState, type CSSProperties } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { useAccount } from 'wagmi';
 import type { AccentName, AssetMap, BorrowerTab, Claim, Mode, Phase, Position, ThemeName, Tweaks } from './types';
 import { ASSETS, INITIAL_POSITION, EMPTY_POSITION } from './lib/mock-data';
@@ -119,6 +119,27 @@ function savePosSnap(addr: string, snap: PosSnap): void {
   }
 }
 
+// Persist PENDING UNWRAP CLAIMS per wallet. Each unwrap creates an on-chain withdrawal that
+// must be claimed separately; the claim only becomes actionable after the threshold-decrypt.
+// Without persistence a refresh mid-decrypt drops the pending claim from the UI, stranding the
+// freed collateral (the withdrawal stays unclaimed on-chain). Restored on mount + the decrypt
+// is re-warmed so the Claim button still works.
+const claimsKey = (addr: string) => `equinox.unwrapClaims.${addr.toLowerCase()}`;
+function loadClaims(addr: string): Claim[] {
+  try {
+    return JSON.parse(localStorage.getItem(claimsKey(addr)) || '[]') as Claim[];
+  } catch {
+    return [];
+  }
+}
+function saveClaims(addr: string, claims: Claim[]): void {
+  try {
+    localStorage.setItem(claimsKey(addr), JSON.stringify(claims));
+  } catch {
+    /* storage unavailable — best-effort */
+  }
+}
+
 const TWEAK_DEFAULTS: Tweaks = {
   theme: 'sterling',
   accent: 'Teal',
@@ -224,6 +245,18 @@ export default function App() {
   useEffect(() => {
     setTxHistory(address ? getTxHistory(address) : []);
   }, [address]);
+
+  // restore pending unwrap claims for this wallet (survives refresh mid-decrypt) and re-warm
+  // each one's threshold-decrypt so the Claim button stays instant after a reload.
+  useEffect(() => {
+    if (!address) {
+      setClaims([]);
+      return;
+    }
+    const cached = loadClaims(address);
+    setClaims(cached);
+    if (USE_REAL_CHAIN) cached.forEach((c) => void equinox.prepareUnwrap(c.id));
+  }, [address, equinox]);
   const recordTx = useCallback(
     (e: Omit<TxHistoryEntry, 'ts'>) => {
       if (!address) return;
@@ -244,6 +277,13 @@ export default function App() {
     setWeekendChain(c.weekend);
   }, [address]);
 
+  // mirror the latest committed position so applySnapshot can merge against it without
+  // re-creating on every pos change (which would churn the fetch effects).
+  const posRef = useRef(pos);
+  useEffect(() => {
+    posRef.current = pos;
+  }, [pos]);
+
   // read the user's REAL on-chain position (no-op in mock mode)
   const applySnapshot = useCallback(
     (snap: PositionSnapshot) => {
@@ -251,12 +291,28 @@ export default function App() {
         snap.factorA != null && snap.factorB != null
           ? { A: snap.factorA, B: snap.factorB, hfBps: snap.hfBps ?? null }
           : null;
-      setPos(snap.position);
+      const prev = posRef.current;
+      let position = snap.position;
+      // CARRY-OVER: if a held asset's collateral couldn't be decrypted this read (permit not
+      // ready / threshold-network miss), keep its last-known amount rather than letting the
+      // empty result erase it. A genuinely-withdrawn asset decrypts to 0 and is NOT carried.
+      const unread = snap.unreadableCollateral ?? [];
+      if (unread.length) {
+        const have = new Set(position.collateral.map((c) => c.under));
+        const carried = prev.collateral.filter((c) => unread.includes(c.under) && !have.has(c.under));
+        if (carried.length) position = { ...position, collateral: [...position.collateral, ...carried] };
+      }
+      // likewise keep last-known debt if this read couldn't decrypt it (never show 0 on a miss).
+      if (position.debtUnknown && prev.debtUSDC > 0) {
+        position = { ...position, debtUSDC: prev.debtUSDC, debtUnknown: false };
+      }
+      posRef.current = position;
+      setPos(position);
       setChainIndex(snap.indexBps / 10_000);
       setWeekendChain(snap.weekendOnChain);
       setChainFacts(facts);
       if (USE_REAL_CHAIN && address) {
-        savePosSnap(address, { position: snap.position, facts, indexBps: snap.indexBps, weekend: snap.weekendOnChain });
+        savePosSnap(address, { position, facts, indexBps: snap.indexBps, weekend: snap.weekendOnChain });
       }
     },
     [address],
@@ -430,7 +486,11 @@ export default function App() {
   const onRequestUnwrap = async (n: number, assetId: number) => {
     const sym = (ASSET_BY_ID[assetId] ?? activeAsset).sym;
     const req = await equinox.requestUnwrap(n, assetId);
-    setClaims((c) => [...c, { id: req.claimId, under: sym, shares: n, hash: req.hash, requestedAt: Date.now(), readyAt: req.readyAt }]);
+    setClaims((c) => {
+      const next = [...c, { id: req.claimId, under: sym, shares: n, hash: req.hash, requestedAt: Date.now(), readyAt: req.readyAt }];
+      if (address) saveClaims(address, next); // persist so a refresh mid-decrypt keeps the claim
+      return next;
+    });
     recordTx({ kind: 'unwrap', sym, amount: n, txHash: req.txHash });
     pushToast({ title: `Unwrap requested (${sym}) — claimable in ~3 blocks`, icon: 'clock' });
   };
@@ -448,7 +508,11 @@ export default function App() {
       ),
       walletShares: { ...p.walletShares, [claim.under]: (p.walletShares[claim.under] ?? 0) + freed },
     }));
-    setClaims((cs) => cs.filter((x) => x.id !== id));
+    setClaims((cs) => {
+      const next = cs.filter((x) => x.id !== id);
+      if (address) saveClaims(address, next); // persist the removal so a claimed entry won't reappear
+      return next;
+    });
     if (freed > 0) recordTx({ kind: 'claim', sym: claim.under, amount: freed, txHash: hash });
     pushToast(
       freed > 0

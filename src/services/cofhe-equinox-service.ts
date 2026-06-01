@@ -531,6 +531,7 @@ export class CofheEquinoxService implements EquinoxService {
     let scaledDebt = 0;
     let debtUnknown = false;
     const collateral: Position['collateral'] = [];
+    const unreadableCollateral: string[] = []; // held assets whose decrypt failed this round
     const initialized = await this.read<boolean>(pool, poolAbi, 'initialized', [addr]);
     if (initialized) {
       await ensureCofhe(this.pub, await getWalletClient()); // ensures an active permit
@@ -548,7 +549,12 @@ export class CofheEquinoxService implements EquinoxService {
       for (let i = 0; i < COLLATERAL_ASSETS.length; i++) {
         if (!collHandles[i]) continue; // unset → user never deposited this asset
         const shares = await this.safeUnseal(collHandles[i]);
-        if (shares === null) continue; // decryption failed → don't fabricate a 0-share entry
+        if (shares === null) {
+          // SET handle but the threshold-decrypt failed (permit not ready / network) → mark
+          // unreadable so the UI carries over the last-known amount instead of dropping it.
+          unreadableCollateral.push(COLLATERAL_ASSETS[i].sym);
+          continue;
+        }
         if (shares > 0) {
           const a = COLLATERAL_ASSETS[i];
           collateral.push({ sym: `fb${a.sym.slice(1)}`, under: a.sym, shares });
@@ -579,7 +585,7 @@ export class CofheEquinoxService implements EquinoxService {
       hfBps = Number(await this.read<bigint>(pool, poolAbi, 'healthFactorBps', [addr]));
     } catch { /* factors not settled yet */ }
 
-    return { position, indexBps: Number(indexBpsRaw), priceStale, weekendOnChain, factorA, factorB, hfBps };
+    return { position, indexBps: Number(indexBpsRaw), priceStale, weekendOnChain, factorA, factorB, hfBps, unreadableCollateral };
   }
 
   /** Drop any cached decryption permit, mint a fresh one, and re-read the position.
