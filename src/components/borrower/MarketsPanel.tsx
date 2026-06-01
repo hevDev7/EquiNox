@@ -6,7 +6,7 @@
    private-banking idiom (serif prices, ciphertext accents, sealed pills).
    ============================================================ */
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { ASSETS } from '../../lib/mock-data';
 import { SECTORS, SECTOR_OF, type SectorKey } from '../../config/stocks';
 import { PROTOCOL } from '../../lib/protocol';
@@ -133,12 +133,111 @@ function fmtVol(v: number): string {
   return `$${v.toFixed(0)}`;
 }
 
+/** Sector filter that shares ONE row with the search/movement chips: renders as many sector
+ *  chips as fit the available width and collapses the rest into a "+N more ▾" popover. There's
+ *  no separate "All" chip — clicking the active sector toggles it off (= all sectors). */
+function SectorFilter({ value, onChange }: { value: SectorKey | null; onChange: (s: SectorKey | null) => void }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const widths = useRef<number[]>([]);
+  const [fit, setFit] = useState(SECTORS.length);
+  const [open, setOpen] = useState(false);
+
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const compute = () => {
+      if (widths.current.length === 0) {
+        const chips = el.querySelectorAll('[data-sec]');
+        if (chips.length === SECTORS.length) widths.current = Array.from(chips).map((c) => (c as HTMLElement).offsetWidth);
+      }
+      if (widths.current.length !== SECTORS.length) return;
+      const avail = el.clientWidth;
+      const GAP = 6;
+      const MORE = 86; // space reserved for the "+N more" button when there is overflow
+      let used = 0;
+      let n = 0;
+      for (let i = 0; i < SECTORS.length; i++) {
+        const reserve = i < SECTORS.length - 1 ? MORE + GAP : 0;
+        if (used + widths.current[i] + reserve <= avail) {
+          used += widths.current[i] + GAP;
+          n++;
+        } else break;
+      }
+      setFit(n);
+    };
+    compute();
+    const ro = new ResizeObserver(compute);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  const chipStyle = (active: boolean): CSSProperties => ({
+    flex: 'none',
+    whiteSpace: 'nowrap',
+    background: active ? 'var(--accent-soft)' : 'var(--surface-2)',
+    border: active ? '1px solid var(--accent-line)' : '1px solid var(--line)',
+    color: active ? 'var(--accent-ink)' : 'var(--ink-3)',
+    boxShadow: active ? 'var(--shadow-sm)' : 'none',
+  });
+  const pick = (k: SectorKey) => {
+    onChange(value === k ? null : k); // toggle: clicking the active sector clears it
+    setOpen(false);
+  };
+  const inline = SECTORS.slice(0, fit);
+  const overflow = SECTORS.slice(fit);
+
+  return (
+    <div ref={ref} style={{ display: 'flex', gap: 6, alignItems: 'center', flex: '1 1 0', minWidth: 0, overflow: 'hidden' }}>
+      {inline.map((s) => (
+        <button key={s.key} data-sec="" onClick={() => pick(s.key)} className="btn btn-sm" style={chipStyle(value === s.key)}>
+          {s.label}
+        </button>
+      ))}
+      {overflow.length > 0 && (
+        <div style={{ position: 'relative', flex: 'none' }}>
+          <button className="btn btn-sm" onClick={() => setOpen((o) => !o)} style={chipStyle(overflow.some((s) => s.key === value))}>
+            +{overflow.length} more ▾
+          </button>
+          {open && (
+            <>
+              <div onClick={() => setOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 60 }} />
+              <div
+                style={{
+                  position: 'absolute',
+                  top: 'calc(100% + 6px)',
+                  right: 0,
+                  zIndex: 61,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 4,
+                  padding: 6,
+                  minWidth: 150,
+                  background: 'var(--surface)',
+                  border: '1px solid var(--line-2)',
+                  borderRadius: 10,
+                  boxShadow: 'var(--shadow-lg)',
+                }}
+              >
+                {overflow.map((s) => (
+                  <button key={s.key} onClick={() => pick(s.key)} className="btn btn-sm" style={{ ...chipStyle(value === s.key), justifyContent: 'flex-start' }}>
+                    {s.label}
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /** `tvl` = per-market collateral locked (totalFunded whole shares) keyed by dShare symbol;
  *  Volume$ = tvl[sym] × live price. */
 export function MarketsPanel({ onDeposit, assets = ASSETS, tvl = {} }: { onDeposit: (sym: string) => void; assets?: AssetMap; tvl?: Record<string, number> }) {
   const [q, setQ] = useState('');
   const [filter, setFilter] = useState<Filter>('all');
-  const [sector, setSector] = useState<SectorKey | 'all'>('all');
+  const [sector, setSector] = useState<SectorKey | null>(null); // null = all sectors (no double "All")
 
   const all = useMemo(() => Object.values(assets).filter((a) => a.sym !== 'USDC'), [assets]);
   // Top 4 gainers + top 4 losers — both ends of the chg-sorted list (only assets with a live
@@ -165,7 +264,7 @@ export function MarketsPanel({ onDeposit, assets = ASSETS, tvl = {} }: { onDepos
     const needle = q.trim().toLowerCase();
     return all
       .filter((a) => (filter === 'gainers' ? (a.chg ?? 0) >= 0 : filter === 'losers' ? (a.chg ?? 0) < 0 : true))
-      .filter((a) => sector === 'all' || SECTOR_OF[a.sym] === sector)
+      .filter((a) => sector === null || SECTOR_OF[a.sym] === sector)
       .filter((a) => !needle || a.sym.toLowerCase().includes(needle) || a.name.toLowerCase().includes(needle))
       .sort((x, y) => (y.price ?? 0) - (x.price ?? 0));
   }, [all, q, filter, sector]);
@@ -225,9 +324,9 @@ export function MarketsPanel({ onDeposit, assets = ASSETS, tvl = {} }: { onDepos
           </div>
         </div>
 
-        {/* toolbar */}
-        <div style={{ display: 'flex', gap: 10, marginTop: 16, alignItems: 'center', flexWrap: 'wrap' }}>
-          <div style={{ position: 'relative', flex: '1 1 220px', minWidth: 180 }}>
+        {/* toolbar — search + movement chips + sector chips, ONE row; sectors overflow into "+more" */}
+        <div style={{ display: 'flex', gap: 10, marginTop: 16, alignItems: 'center', flexWrap: 'nowrap' }}>
+          <div style={{ position: 'relative', flex: '0 1 220px', minWidth: 150 }}>
             <span style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: 'var(--ink-faint)', display: 'inline-flex' }}>
               <Icon d={ICON.search} size={15} />
             </span>
@@ -239,7 +338,7 @@ export function MarketsPanel({ onDeposit, assets = ASSETS, tvl = {} }: { onDepos
               style={{ paddingLeft: 36, height: 42, fontSize: 14 }}
             />
           </div>
-          <div style={{ display: 'inline-flex', gap: 3, padding: 3, borderRadius: 10, background: 'var(--surface-2)', border: '1px solid var(--line)' }}>
+          <div style={{ display: 'inline-flex', gap: 3, padding: 3, borderRadius: 10, background: 'var(--surface-2)', border: '1px solid var(--line)', flex: 'none' }}>
             {chips.map(([id, label]) => (
               <button
                 key={id}
@@ -256,28 +355,7 @@ export function MarketsPanel({ onDeposit, assets = ASSETS, tvl = {} }: { onDepos
               </button>
             ))}
           </div>
-        </div>
-
-        {/* sector filter — by company category */}
-        <div style={{ display: 'flex', gap: 8, marginTop: 12, alignItems: 'center', flexWrap: 'wrap' }}>
-          <span className="eyebrow" style={{ fontSize: 12, marginRight: 2 }}>Sector</span>
-          {([['all', 'All'], ...SECTORS.map((s) => [s.key, s.label] as [SectorKey, string])] as [SectorKey | 'all', string][]).map(
-            ([id, label]) => (
-              <button
-                key={id}
-                onClick={() => setSector(id)}
-                className="btn btn-sm"
-                style={{
-                  background: sector === id ? 'var(--accent-soft)' : 'var(--surface-2)',
-                  border: sector === id ? '1px solid var(--accent-line)' : '1px solid var(--line)',
-                  color: sector === id ? 'var(--accent-ink)' : 'var(--ink-3)',
-                  boxShadow: sector === id ? 'var(--shadow-sm)' : 'none',
-                }}
-              >
-                {label}
-              </button>
-            ),
-          )}
+          <SectorFilter value={sector} onChange={setSector} />
         </div>
       </div>
 
