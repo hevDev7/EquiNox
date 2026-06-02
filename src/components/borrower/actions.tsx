@@ -622,7 +622,12 @@ export function BorrowScreen({
   const [amt, setAmt] = useState('');
   const [open, setOpen] = useState(false);
   const n = parseFloat(amt) || 0;
-  const exceeds = n > der.remaining;
+  // The borrowable cap, floored to whole USDC. We display, Max-fill and gate against THIS single
+  // value so they stay consistent: fmtUSD rounds for display (751.6 → "$752"), but `exceeds` must
+  // not flag a request equal to the shown "Available" — flooring makes the shown amount truly safe
+  // (≤ real headroom, so FHE.select won't silently draw 0 on-chain).
+  const cap = Math.max(0, Math.floor(der.remaining));
+  const exceeds = n > cap;
   const valid = n > 0 && !weekend;
   const price = asset.price ?? 0;
   const steps: Step[] = [
@@ -656,11 +661,11 @@ export function BorrowScreen({
             value={amt}
             onChange={setAmt}
             suffix="USDC"
-            onMax={() => setAmt(String(Math.floor(der.remaining)))}
+            onMax={() => setAmt(String(cap))}
             label="Borrow amount"
             max={
               <>
-                Available: <SealedValue value={fmtUSD(der.remaining)} len={6} /> · encrypted limit
+                Available: <SealedValue value={fmtUSD(cap)} len={6} /> · encrypted limit
               </>
             }
           />
@@ -673,7 +678,7 @@ export function BorrowScreen({
           )}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 8, marginTop: 16 }}>
             {[0.25, 0.5, 1].map((f) => (
-              <button key={f} className="btn btn-sm" disabled={weekend} onClick={() => setAmt(String(Math.floor(der.remaining * f)))}>
+              <button key={f} className="btn btn-sm" disabled={weekend} onClick={() => setAmt(String(Math.floor(cap * f)))}>
                 {f === 1 ? 'Max' : `${f * 100}%`}
               </button>
             ))}

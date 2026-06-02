@@ -35,6 +35,10 @@ export interface PositionSnapshot {
   /** dShare symbols whose SET collateral handle could NOT be decrypted this read (permit not
    *  ready / threshold network) — the UI carries over their last-known amount instead of dropping. */
   unreadableCollateral?: string[];
+  /** On-chain oracle price (whole USD, `assets[i].priceUsd`) for each HELD collateral symbol — the
+   *  SAME price the borrow gate uses. The UI values borrow capacity at this (not the live Pyth price)
+   *  so "Available to borrow" matches what the chain will actually allow (→ 0 after a max borrow). */
+  oraclePrices?: Record<string, number>;
 }
 
 export interface WalletInfo {

@@ -20,23 +20,31 @@ export const PROTOCOL = {
 export function derivePosition(
   pos: Position,
   prices: AssetMap,
-  opts: { weekend?: boolean; index?: number } = {},
+  opts: { weekend?: boolean; index?: number; oraclePrices?: Record<string, number> } = {},
 ): DerivedPosition {
   const weekend = !!opts.weekend;
   // live borrow index from chain (currentIndexBps/BPS) in real mode; the PRD
   // demo constant otherwise. `pos.debtUSDC` carries the un-indexed principal.
   const I = opts.index ?? PROTOCOL.interestIndex;
   let collatShares = 0;
-  let collatValue = 0;
+  let collatValue = 0; // market value at LIVE price (for display)
+  let collatGateValue = 0; // value at the ON-CHAIN oracle price (what the borrow gate actually uses)
   pos.collateral.forEach((c) => {
-    const p = prices[c.under]?.price ?? 0;
+    const live = prices[c.under]?.price ?? 0;
+    // The on-chain gate values collateral at assets[i].priceUsd, NOT the live Pyth price. Use it for
+    // borrow capacity so "Available to borrow" matches the chain (→ 0 after a max borrow); fall back
+    // to the live price in mock mode / before the snapshot loads.
+    const gate = opts.oraclePrices?.[c.under] ?? live;
     collatShares += c.shares;
-    collatValue += c.shares * p;
+    collatValue += c.shares * live;
+    collatGateValue += c.shares * gate;
   });
   const effLT = PROTOCOL.LT * (weekend ? 1 - PROTOCOL.haircut : 1);
   const debt = pos.debtUSDC * I;
-  const maxBorrow = collatValue * PROTOCOL.LTV * (weekend ? 1 - PROTOCOL.haircut : 1);
-  const remaining = Math.max(0, maxBorrow - pos.debtUSDC);
+  const maxBorrow = collatGateValue * PROTOCOL.LTV * (weekend ? 1 - PROTOCOL.haircut : 1);
+  // subtract the INDEXED current debt (matches on-chain eRoom = eMax − scaledDebt·idx/BPS), not the
+  // raw un-indexed principal — otherwise interest accrual would leave a phantom borrowable slice.
+  const remaining = Math.max(0, maxBorrow - debt);
   const hf = debt > 0 ? (collatValue * effLT) / debt : Infinity;
 
   // public blinded factors

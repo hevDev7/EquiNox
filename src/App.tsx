@@ -168,6 +168,7 @@ export default function App() {
   const [liq, setLiq] = useState({ available: 0, totalSupplied: 0, myShares: 0, supplyApyBps: 0, borrowApyBps: 0, utilizationBps: 0 });
   const [weekendChain, setWeekendChain] = useState(false); // contract's isWeekendMode (weekendOverride-aware)
   const [marketTvl, setMarketTvl] = useState<Record<string, number>>({}); // per-market collateral locked (shares) → $ volume
+  const [oraclePrices, setOraclePrices] = useState<Record<string, number>>({}); // on-chain gate price per held asset → borrow capacity
   const [txHistory, setTxHistory] = useState<TxHistoryEntry[]>([]); // local repay/unwrap/claim history (Repay & Unwrap page)
 
   useEffect(() => {
@@ -331,6 +332,7 @@ export default function App() {
       }
       posRef.current = position;
       setPos(position);
+      setOraclePrices(snap.oraclePrices ?? {}); // gate prices for the borrow-capacity calc
       setChainIndex(snap.indexBps / 10_000);
       setWeekendChain(snap.weekendOnChain);
       setChainFacts(facts);
@@ -426,7 +428,7 @@ export default function App() {
   const activeAsset = ASSET_BY_ID[activeAssetId] ?? COLLATERAL_ASSETS[0];
   const asset = liveAssets[activeAsset.sym] ?? liveAssets.dTSLA;
   const der = useMemo(() => {
-    const d = derivePosition(pos, liveAssets, { weekend, index: chainIndex });
+    const d = derivePosition(pos, liveAssets, { weekend, index: chainIndex, oraclePrices });
     // Real mode: surface the AUTHORITATIVE on-chain values (the public blinded factors the
     // chain actually exposes + the contract's healthFactorBps), not client-side approximations.
     if (USE_REAL_CHAIN && chainFacts) {
@@ -435,7 +437,7 @@ export default function App() {
       if (chainFacts.hfBps != null) d.hf = chainFacts.hfBps / 10_000;
     }
     return d;
-  }, [pos, weekend, liveAssets, chainIndex, chainFacts]);
+  }, [pos, weekend, liveAssets, chainIndex, chainFacts, oraclePrices]);
 
   /* ---- borrower actions (service-backed) ----
      The on-chain tx confirmation (bounded in the service) is the SOLE gate for the TxFlow

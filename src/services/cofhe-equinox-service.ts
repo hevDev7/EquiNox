@@ -615,6 +615,7 @@ export class CofheEquinoxService implements EquinoxService {
     let debtUnknown = false;
     const collateral: Position['collateral'] = [];
     const unreadableCollateral: string[] = []; // held assets whose decrypt failed this round
+    const oraclePrices: Record<string, number> = {}; // on-chain priceUsd per held asset (the gate's price)
     const initialized = await this.read<boolean>(pool, poolAbi, 'initialized', [addr]);
     if (initialized) {
       await ensureCofhe(this.pub, await getWalletClient()); // ensures an active permit
@@ -624,22 +625,31 @@ export class CofheEquinoxService implements EquinoxService {
       if (debtRead === null) debtUnknown = true;
       else scaledDebt = debtRead;
 
-      // read each asset's collateral handle; only decrypt the ones the user has touched
-      // (an unset handle is bytes32(0) → no collateral for that asset).
-      const collHandles = await Promise.all(
-        COLLATERAL_ASSETS.map((a) => this.read<bigint>(pool, poolAbi, 'encryptedCollateralOf', [addr, BigInt(a.assetId)])),
-      );
+      // read each asset's collateral handle + its on-chain config (priceUsd) in parallel; only
+      // decrypt the ones the user has touched (an unset handle is bytes32(0) → no collateral).
+      const [collHandles, cfgs] = await Promise.all([
+        Promise.all(COLLATERAL_ASSETS.map((a) => this.read<bigint>(pool, poolAbi, 'encryptedCollateralOf', [addr, BigInt(a.assetId)]))),
+        Promise.all(
+          COLLATERAL_ASSETS.map((a) =>
+            this.read<readonly unknown[]>(pool, poolAbi, 'assets', [BigInt(a.assetId)]).catch(() => null),
+          ),
+        ),
+      ]);
       for (let i = 0; i < COLLATERAL_ASSETS.length; i++) {
         if (!collHandles[i]) continue; // unset → user never deposited this asset
+        const a = COLLATERAL_ASSETS[i];
+        // record the on-chain gate price for this HELD asset (even if the decrypt below fails, so a
+        // carried-over collateral amount is still valued at the gate price, not the live Pyth price).
+        const cfg = cfgs[i];
+        if (cfg) oraclePrices[a.sym] = Number(cfg[1] as bigint); // assets(id)[1] = priceUsd (whole USD)
         const shares = await this.safeUnseal(collHandles[i]);
         if (shares === null) {
           // SET handle but the threshold-decrypt failed (permit not ready / network) → mark
           // unreadable so the UI carries over the last-known amount instead of dropping it.
-          unreadableCollateral.push(COLLATERAL_ASSETS[i].sym);
+          unreadableCollateral.push(a.sym);
           continue;
         }
         if (shares > 0) {
-          const a = COLLATERAL_ASSETS[i];
           collateral.push({ sym: `fb${a.sym.slice(1)}`, under: a.sym, shares });
         }
       }
@@ -668,7 +678,7 @@ export class CofheEquinoxService implements EquinoxService {
       hfBps = Number(await this.read<bigint>(pool, poolAbi, 'healthFactorBps', [addr]));
     } catch { /* factors not settled yet */ }
 
-    return { position, indexBps: Number(indexBpsRaw), priceStale, weekendOnChain, factorA, factorB, hfBps, unreadableCollateral };
+    return { position, indexBps: Number(indexBpsRaw), priceStale, weekendOnChain, factorA, factorB, hfBps, unreadableCollateral, oraclePrices };
   }
 
   /** Drop any cached decryption permit, mint a fresh one, and re-read the position.
