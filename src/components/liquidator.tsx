@@ -263,6 +263,9 @@ export function LiquidatorConsole({
           setDone((d) => ({ ...d, [id]: true }));
           setSel(null);
           pushToast({ title: 'Liquidation executed', icon: 'bolt', hash });
+          // refresh the public factors/HF so the victim reflects its POST-liquidation state (debt
+          // repaid, collateral seized) instead of the stale pre-liquidation row.
+          void equinox.listAccounts().then(setAccounts);
         }}
       />
     </div>

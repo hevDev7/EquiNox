@@ -294,6 +294,19 @@ export default function App() {
     posRef.current = pos;
   }, [pos]);
 
+  // Apply an optimistic position update AND sync posRef (applySnapshot's carry-over merge-base)
+  // SYNCHRONOUSLY. Without this, the background refresh fired by syncState() can resolve before the
+  // useEffect([pos]) above flushes posRef, so a failed sealed read would carry over the STALE pre-tx
+  // value and REVERT the just-committed change (debt reappears after repay, collateral after deposit/
+  // claim). `mut` must return the FULL next position (a replace, not an accumulate). Used by every
+  // handler that optimistically mutates a SEALED-derived field (debt/collateral): onBorrow, onRepay,
+  // onDeposit, onClaim. Plaintext wallet fields (mints) don't need it — they're always read fresh.
+  const commitPos = useCallback((mut: (p: Position) => Position) => {
+    const next = mut(posRef.current);
+    posRef.current = next;
+    setPos(next);
+  }, []);
+
   // read the user's REAL on-chain position (no-op in mock mode)
   const applySnapshot = useCallback(
     (snap: PositionSnapshot) => {
@@ -432,8 +445,9 @@ export default function App() {
   const onDeposit = async (n: number, assetId: number = activeAssetId) => {
     const a = ASSET_BY_ID[assetId] ?? activeAsset;
     const { txHash: hash } = await equinox.deposit(n, assetId);
-    // optimistic multi-collateral upsert: bump the matching entry, else append a new one
-    setPos((p) => {
+    // optimistic multi-collateral upsert: bump the matching entry, else append a new one. commitPos
+    // syncs posRef so a failed background collateral decrypt can't carry over the PRE-deposit amount.
+    commitPos((p) => {
       const i = p.collateral.findIndex((c) => c.under === a.sym);
       const collateral =
         i >= 0
@@ -480,8 +494,12 @@ export default function App() {
     const res = await equinox.borrow(n, der.remaining);
     if (res.pending) {
       // borrow committed on-chain; USDC disbursement is finishing in the background (threshold
-      // network slow/degraded). Record the request, nudge recovery, and let syncState reflect the
-      // USDC once it lands — the modal completes instead of hanging on the decrypt.
+      // network slow/degraded). The DEBT is already committed on-chain at requestBorrow, so reflect
+      // it NOW — otherwise "Available to borrow" keeps showing the full amount as if nothing was
+      // taken. The USDC itself lands later via recoverPayouts/syncState. Sync posRef so that when the
+      // racing background read can't decrypt the sealed debt (debtUnknown), the carry-over guard
+      // keeps this value instead of clobbering it back to 0.
+      commitPos((p) => ({ ...p, debtUSDC: p.debtUSDC + n }));
       recordTx({ kind: 'borrow', amount: n, txHash: res.txHash });
       pushToast({ title: `Borrow confirmed — ${fmtUSD(n)} USDC disbursing (network slow, arrives shortly)`, icon: 'clock', hash: res.txHash });
       setTab('portfolio');
@@ -493,7 +511,9 @@ export default function App() {
       pushToast({ title: 'FHE.select drew $0 — limit exceeded, no leak', icon: 'shield' });
       return;
     }
-    setPos((p) => ({ ...p, debtUSDC: p.debtUSDC + res.disbursed, walletUSDC: p.walletUSDC + res.disbursed }));
+    // debt rises by the committed draw (n, gated all-or-nothing by FHE.select); wallet by the USDC
+    // actually disbursed. commitPos syncs posRef so a racing/failed background refresh can't reset debt.
+    commitPos((p) => ({ ...p, debtUSDC: p.debtUSDC + n, walletUSDC: p.walletUSDC + res.disbursed }));
     recordTx({ kind: 'borrow', amount: res.disbursed, txHash: res.txHash });
     pushToast({ title: `Borrowed ${fmtUSD(res.disbursed)} USDC confidentially`, icon: 'check', hash: res.txHash });
     setTab('portfolio');
@@ -502,7 +522,10 @@ export default function App() {
 
   const onRepay = async (n: number) => {
     const { txHash: hash } = await equinox.repay(n);
-    setPos((p) => ({ ...p, debtUSDC: Math.max(0, p.debtUSDC - n), walletUSDC: p.walletUSDC - n }));
+    // commitPos syncs posRef so a failed background debt decrypt can't carry over the PRE-repay
+    // (higher) debt and make the repay look reverted. Repaid-to-zero → prev.debtUSDC===0, so the
+    // debtUnknown carry-over guard (which requires prev>0) correctly does NOT resurrect the debt.
+    commitPos((p) => ({ ...p, debtUSDC: Math.max(0, p.debtUSDC - n), walletUSDC: p.walletUSDC - n }));
     recordTx({ kind: 'repay', amount: n, txHash: hash });
     pushToast({ title: `Repaid ${fmtUSD(n)} USDC`, icon: 'check', hash });
     syncState();
@@ -525,8 +548,10 @@ export default function App() {
     if (!claim) return;
     // the freed amount is HF-gated on-chain → use what claimUnwrapped ACTUALLY released (may be 0)
     const { txHash: hash, shares: freed } = await equinox.claimUnwrapped(id, claim.shares);
-    // multi-collateral: decrement ONLY the unwrapped asset by the real freed amount, keep others
-    setPos((p) => ({
+    // multi-collateral: decrement ONLY the unwrapped asset by the real freed amount, keep others.
+    // commitPos syncs posRef so a failed background collateral decrypt can't carry over the PRE-claim
+    // (higher) amount and make the claim look reverted.
+    commitPos((p) => ({
       ...p,
       collateral: p.collateral.map((c) =>
         c.under === claim.under ? { ...c, shares: Math.max(0, c.shares - freed) } : c,
