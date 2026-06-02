@@ -9,6 +9,7 @@ import { Icon, ICON } from '../lib/icons';
 import { useScramble } from '../hooks/useScramble';
 import { useTweakCtx } from '../context/TweakContext';
 import { logoSources, tickerFromSym } from '../lib/logos';
+import logoEquinox from '../assets/logo-equinox.png';
 
 const css = (s: CSSProperties & Record<string, string | number>) => s as CSSProperties;
 
@@ -259,22 +260,16 @@ export function Toast({ toast }: { toast: ToastInfo | null }) {
   );
 }
 
-/* ---- brand mark ---- */
-export function Logo({ light = false, size = 26 }: { light?: boolean; size?: number }) {
+/* ---- brand mark: the Equinox sphere (half-lit) ---- */
+export function Logo({ size = 26 }: { light?: boolean; size?: number }) {
   return (
-    <div
-      style={{
-        width: size,
-        height: size,
-        borderRadius: 7,
-        background: light ? 'var(--accent)' : 'var(--ink)',
-        display: 'grid',
-        placeItems: 'center',
-        flex: 'none',
-      }}
-    >
-      <Icon d={ICON.shieldCheck} size={size * 0.62} sw={2} style={{ color: light ? 'var(--surface-ink)' : 'var(--bg)' }} />
-    </div>
+    <img
+      src={logoEquinox}
+      alt="Equinox"
+      width={size}
+      height={size}
+      style={{ width: size, height: size, borderRadius: '50%', display: 'block', flex: 'none', objectFit: 'cover' }}
+    />
   );
 }
 
