@@ -422,33 +422,71 @@ export class CofheEquinoxService implements EquinoxService {
     return Number(value);
   }
 
-  /** AUDIT #2: finish any borrow payouts that were stranded by a coprocessor outage.
-   *  Returns the total USDC recovered. Safe to call on every app load. */
+  /** AUDIT #2: finish any borrow payouts stranded by a coprocessor outage (the disburse step's
+   *  threshold-decrypt timed out, so requestBorrow/requestWithdraw committed but claimWithdraw never
+   *  ran → USDC queued, not lost). Returns the total USDC recovered. Safe to call on every app load.
+   *  Self-healing: it doesn't rely on localStorage alone — it also discovers UNCLAIMED on-chain USDC
+   *  withdrawals owned by the caller (via WithdrawRequested events), so a cleared browser / new device
+   *  still finds and completes the payout. */
   async recoverBorrowPayouts(address: string): Promise<number> {
     const me = address as Address;
-    const pending = loadPendingPayouts(me);
-    if (!pending.length) return 0;
     await ensureCofhe(this.pub, await getWalletClient());
+
+    // candidate withdrawal ids = localStorage pendings (fast path) ∪ on-chain WithdrawRequested(isUsdc) for me
+    const ids = new Set<string>();
+    for (const p of loadPendingPayouts(me)) ids.add(p.withdrawId);
+    try {
+      for (const wid of await this._myUsdcWithdrawIds(me)) ids.add(wid.toString());
+    } catch (e) {
+      console.warn('[Equinox] on-chain payout scan failed (deferred):', e);
+    }
+    if (!ids.size) return 0;
+
+    // read each withdrawal once (parallel); claim ONLY our unclaimed USDC payouts. Collateral unwraps
+    // (isUsdc=false) are finished through the claims UI, not here.
+    const rows = await Promise.all(
+      [...ids].map((key) =>
+        this.read<readonly [Address, bigint, boolean, boolean, bigint]>(ADDRESSES.pool, poolAbi, 'withdrawals', [BigInt(key)])
+          .then((w) => ({ key, w }))
+          .catch(() => null),
+      ),
+    );
     let recovered = 0;
-    for (const p of pending) {
+    for (const row of rows) {
+      if (!row) continue;
+      const { key, w } = row;
+      const mineUsdc = w[0].toLowerCase() === me.toLowerCase() && w[2];
+      if (!mineUsdc || w[3]) {
+        removePendingPayout(me, key); // not ours / not USDC / already claimed → stop tracking it
+        continue;
+      }
       try {
-        const wid = BigInt(p.withdrawId);
-        const w = await this.read<readonly [Address, bigint, boolean, boolean, bigint]>(
-          ADDRESSES.pool,
-          poolAbi,
-          'withdrawals',
-          [wid],
-        );
-        if (w[3] || w[0].toLowerCase() !== me.toLowerCase()) {
-          removePendingPayout(me, p.withdrawId); // claimed elsewhere or not ours
-          continue;
-        }
-        recovered += await this._claimPayout(me, wid);
+        recovered += await this._claimPayout(me, BigInt(key)); // decryptForTx → claimWithdraw (real USDC out)
       } catch (e) {
         console.warn('[Equinox] borrow-payout recovery deferred (coprocessor unavailable):', e);
       }
     }
     return recovered;
+  }
+
+  /** Withdrawal ids of USDC payouts (`WithdrawRequested` with isUsdc=true) requested BY `me` — the
+   *  candidate set recovery finishes (the caller filters out already-claimed ones via `withdrawals`). */
+  private async _myUsdcWithdrawIds(me: Address): Promise<bigint[]> {
+    const pool = ADDRESSES.pool;
+    if (!pool || pool.toLowerCase() === ZERO_ADDR) return [];
+    const latest = await this.pub.getBlockNumber();
+    const envBlock = import.meta.env.VITE_POOL_DEPLOY_BLOCK as string | undefined;
+    const LOOKBACK = 90_000n; // public RPCs cap getLogs ranges; bound the scan
+    const fromBlock = envBlock ? BigInt(envBlock) : latest > LOOKBACK ? latest - LOOKBACK : 0n;
+    const logs = await this.pub.getLogs({
+      address: pool,
+      event: parseAbiItem('event WithdrawRequested(address indexed user, uint256 indexed withdrawId, bool isUsdc)'),
+      args: { user: me },
+      fromBlock,
+      toBlock: latest,
+    });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return logs.filter((l) => (l as any).args.isUsdc).map((l) => (l as any).args.withdrawId as bigint);
   }
 
   /** Plaintext fund edge + sealed repay from credit. */
